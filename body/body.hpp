@@ -3,6 +3,7 @@
 struct body
 {
 	float m;
+	float r;
 
 	float x;
 	float y;
@@ -13,7 +14,8 @@ struct body
 
 enum init_policy {
 	uniform,
-	gaussian
+	gaussian,
+	circle
 };
 
 void calc_force(body& body1, body& body2, float timestep);

@@ -17,7 +17,7 @@ int main(int argc, char* argv[])
 	window.setFramerateLimit(settings::frame_rate);
 
 	// creates a number of bodies in a virtual workspace from -1 to 1 on both axes
-	body* bodies = init_bodies(settings::n_bodies, gaussian, 1000, 2000);
+	body* bodies = init_bodies(settings::n_bodies, circle, 1000, 2000);
 	sf::CircleShape* shapes = init_shapes(bodies, settings::n_bodies);
 
 	while (window.isOpen())

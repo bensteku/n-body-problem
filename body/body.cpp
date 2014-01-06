@@ -12,34 +12,61 @@ body* init_bodies(size_t num_bodies, init_policy policy, float min_mass, float m
 {
 	std::random_device dev;
 	std::mt19937 rng(dev());
-	std::uniform_real_distribution<float> pos_dist(-1, 1);
 	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
-	std::normal_distribution<double> pos_dist_normal(0, 0.5);
 
-	body* bodies = new body[num_bodies]; // no free atm because there's no need
+	// no free for this yet
+	body* bodies = new body[num_bodies]; 
 
 	switch (policy)
 	{
-	case uniform:
-		for (size_t i = 0; i < num_bodies; i++)
+		case uniform:
 		{
-			bodies[i].x = pos_dist(rng);
-			bodies[i].y = pos_dist(rng);
-			bodies[i].m = m_dist(rng);
-			bodies[i].v_x = 0;
-			bodies[i].v_y = 0;
-		}
-		break;
-	case gaussian:
-		for (size_t i = 0; i < num_bodies; i++)
+			std::uniform_real_distribution<float> x_uniform(0, settings::window_width);
+			std::uniform_real_distribution<float> y_uniform(0, settings::window_height);
+			for (size_t i = 0; i < num_bodies; i++)
+			{
+				bodies[i].x = x_uniform(rng);
+				bodies[i].y = y_uniform(rng);
+				bodies[i].m = m_dist(rng);
+				bodies[i].r = bodies[i].m / settings::mass_radius_factor;
+				bodies[i].v_x = 0;
+				bodies[i].v_y = 0;
+			}
+			break;
+		}		
+		case gaussian:
 		{
-			bodies[i].x = pos_dist_normal(rng);
-			bodies[i].y = pos_dist_normal(rng);
-			bodies[i].m = m_dist(rng);
-			bodies[i].v_x = 0;
-			bodies[i].v_y = 0;
+			std::normal_distribution<float> x_normal(settings::window_width_h, settings::window_width_h / 2);
+			std::normal_distribution<float> y_normal(settings::window_height_h, settings::window_height_h / 2);
+			for (size_t i = 0; i < num_bodies; i++)
+			{
+				bodies[i].x = x_normal(rng);
+				bodies[i].y = y_normal(rng);
+				bodies[i].m = m_dist(rng);
+				bodies[i].r = bodies[i].m / settings::mass_radius_factor;
+				bodies[i].v_x = 0;
+				bodies[i].v_y = 0;
+			}
+			break;
 		}
-		break;
+		case circle:
+		{
+			std::uniform_real_distribution<float> radius(0.9 * (settings::window_width_h / 4), 1.1 * (settings::window_width_h / 4));
+			float theta = 0;
+			float t_increment = 2 * settings::pi / num_bodies;
+			for (size_t i = 0; i < num_bodies; i++)
+			{
+				float r = radius(rng);
+				bodies[i].x = settings::window_width_h + r * cos(theta);
+				bodies[i].y = settings::window_height_h + r * sin(theta);
+				bodies[i].m = m_dist(rng);
+				bodies[i].r = bodies[i].m / settings::mass_radius_factor;
+				bodies[i].v_x = 0;
+				bodies[i].v_y = 0;
+				theta += t_increment;
+			}
+			break;
+		}
 	}
 
 
@@ -53,9 +80,18 @@ void calc_force(body& body1, body& body2, float timestep)
 
 	float dist = d_x * d_x + d_y * d_y; // no square root needed here because the formula for the force squares it anyway
 
-	// Newton's formula
-	float force = -(body1.m * body2.m * settings::g) / dist;
-
+	float force;
+	if ((body1.r + body2.r) * (body1.r + body2.r) >= dist)
+	{
+		// in case of collision, to avoid NaNs and infinite acceleration
+		force = 0;
+	}
+	else
+	{
+		// Newton's formula
+		force = -(body1.m * body2.m * settings::g) / dist;
+	}
+	
 	// get the inverse of the distance
 	float dist_inv = rsqrt(dist);
 
