@@ -6,19 +6,28 @@
 
 #include <iostream>
 
-// TODO: set max and min radius according to screen size and only then map it onto mass
-// TODO: prevent bodies from going out of range
-// TODO: deal with collision
-// TODO: run processing with SIMD and/or GPU
+// TODO:
+// - set max and min radius according to screen size and only then map it onto mass
+// - prevent bodies from going out of range
+// - or make it so that the screenspace can be zoomed out (which would make worldspace calcuations necessary again)
+// - migrate to Qt
+// - deal with collision
+// - add fixed bodies
+// - add colored bodies and add some way to track their trajectories
+// - seperate gui and calculations into threads
+// - run processing with SIMD and/or GPU
 
 int main(int argc, char* argv[]) 
 {
+
 	sf::RenderWindow window(sf::VideoMode(settings::window_width, settings::window_height), "n body problem");
 	window.setFramerateLimit(settings::frame_rate);
 
 	// creates a number of bodies in a virtual workspace from -1 to 1 on both axes
-	body* bodies = init_bodies(settings::n_bodies, circle, 1000, 2000);
-	sf::CircleShape* shapes = init_shapes(bodies, settings::n_bodies);
+	//std::vector<body> bodies = init_bodies_uniform(settings::n_bodies, 2000, 2000);
+	//std::vector<body> bodies = init_bodies_circle(settings::n_bodies, 2000, 2000, 20);
+	std::vector<body> bodies = init_bodies_normal(settings::n_bodies, 2000, 2000);
+	std::vector<sf::CircleShape> shapes = init_shapes(bodies);
 
 	while (window.isOpen())
 	{
@@ -30,14 +39,16 @@ int main(int argc, char* argv[])
 		}
 
 		window.clear();
-		render_shapes(window, shapes, settings::n_bodies);
+		render_shapes(window, shapes);
 		window.display();
 
-		process_bodies(bodies, settings::n_bodies, settings::timestep);
-		update_positions(bodies, settings::n_bodies, settings::timestep);
-		update_shapes(window, shapes, bodies, settings::n_bodies);
+		process_bodies(bodies, settings::timestep);
+		update_positions(bodies, settings::timestep);
+		update_shapes(window, shapes, bodies);
 
 		//std::cout << bodies[0].x << " " << bodies[0].y << std::endl;
 	}
+
 	return 0;
+
 }

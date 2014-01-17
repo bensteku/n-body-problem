@@ -1,80 +1,101 @@
-//#include <cmath>
-
 #include "body.hpp"
 
 #include <random>
 #include <iostream>
 
-#include "../misc/settings.hpp"
 #include "../misc/util.hpp"
 
-body* init_bodies(size_t num_bodies, init_policy policy, float min_mass, float max_mass)
+/*
+	For initialization, the x-axis will always initially be assumed as ranging from -100 to 100.
+	The y-axis will be cropped according to the aspect ratio.
+*/
+
+std::vector<body> init_bodies_uniform(size_t num_bodies, float min_mass, float max_mass)
 {
+
+	// set up rng
 	std::random_device dev;
 	std::mt19937 rng(dev());
 	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
+	// determine which dimension is bigger
+	std::uniform_real_distribution<float> x_uniform(-100, 100);
+	std::uniform_real_distribution<float> y_uniform(-100 * settings::aspect_ratio, 100 * settings::aspect_ratio);	
 
-	// no free for this yet
-	body* bodies = new body[num_bodies]; 
+	std::vector<body> bodies;
+	bodies.resize(num_bodies);
 
-	switch (policy)
+	for (body& it : bodies)
 	{
-		case uniform:
-		{
-			std::uniform_real_distribution<float> x_uniform(0, settings::window_width);
-			std::uniform_real_distribution<float> y_uniform(0, settings::window_height);
-			for (size_t i = 0; i < num_bodies; i++)
-			{
-				bodies[i].x = x_uniform(rng);
-				bodies[i].y = y_uniform(rng);
-				bodies[i].m = m_dist(rng);
-				bodies[i].r = bodies[i].m / settings::mass_radius_factor;
-				bodies[i].v_x = 0;
-				bodies[i].v_y = 0;
-			}
-			break;
-		}		
-		case gaussian:
-		{
-			std::normal_distribution<float> x_normal(settings::window_width_h, settings::window_width_h / 2);
-			std::normal_distribution<float> y_normal(settings::window_height_h, settings::window_height_h / 2);
-			for (size_t i = 0; i < num_bodies; i++)
-			{
-				bodies[i].x = x_normal(rng);
-				bodies[i].y = y_normal(rng);
-				bodies[i].m = m_dist(rng);
-				bodies[i].r = bodies[i].m / settings::mass_radius_factor;
-				bodies[i].v_x = 0;
-				bodies[i].v_y = 0;
-			}
-			break;
-		}
-		case circle:
-		{
-			std::uniform_real_distribution<float> radius(0.9 * (settings::window_width_h / 4), 1.1 * (settings::window_width_h / 4));
-			float theta = 0;
-			float t_increment = 2 * settings::pi / num_bodies;
-			for (size_t i = 0; i < num_bodies; i++)
-			{
-				float r = radius(rng);
-				bodies[i].x = settings::window_width_h + r * cos(theta);
-				bodies[i].y = settings::window_height_h + r * sin(theta);
-				bodies[i].m = m_dist(rng);
-				bodies[i].r = bodies[i].m / settings::mass_radius_factor;
-				bodies[i].v_x = 0;
-				bodies[i].v_y = 0;
-				theta += t_increment;
-			}
-			break;
-		}
+		it.x = x_uniform(rng);
+		it.y = y_uniform(rng);
+		it.m = m_dist(rng);
+		it.r = it.m / settings::mass_radius_factor;
+		it.v_x = 0;
+		it.v_y = 0;
 	}
 
+	return bodies;
+
+}
+
+std::vector<body> init_bodies_circle(size_t num_bodies, float min_mass, float max_mass, float radius, float deviation)
+{
+
+	std::random_device dev;
+	std::mt19937 rng(dev());
+	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
+	std::uniform_real_distribution<float> random_radius((1 - deviation) * radius, (1 + deviation) * radius);
+
+	std::vector<body> bodies;
+	bodies.resize(num_bodies);
+
+	float theta = 0;
+	float t_increment = 2 * settings::pi / num_bodies;
+	for (body& it : bodies)
+	{
+		float r = random_radius(rng);
+		it.x = r * cos(theta);
+		it.y = r * sin(theta);
+		it.m = m_dist(rng);
+		it.r = it.m / settings::mass_radius_factor;
+		it.v_x = 0;
+		it.v_y = 0;
+		theta += t_increment;
+	}
 
 	return bodies;
+
+}
+
+std::vector<body> init_bodies_normal(size_t num_bodies, float min_mass, float max_mass, float center_x, float center_y, float std_x, float std_y)
+{
+
+	std::random_device dev;
+	std::mt19937 rng(dev());
+	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
+	std::normal_distribution<float> x_normal(center_x, std_x);
+	std::normal_distribution<float> y_normal(center_y, std_y);
+
+	std::vector<body> bodies;
+	bodies.resize(num_bodies);
+	
+	for (body& it : bodies)
+	{
+		it.x = x_normal(rng);
+		it.y = y_normal(rng);
+		it.m = m_dist(rng);
+		it.r = it.m / settings::mass_radius_factor;
+		it.v_x = 0;
+		it.v_y = 0;
+	}
+
+	return bodies;
+
 }
 
 void calc_force(body& body1, body& body2, float timestep)
 {
+
 	float d_x = body1.x - body2.x;
 	float d_y = body1.y - body2.y;
 
@@ -106,24 +127,29 @@ void calc_force(body& body1, body& body2, float timestep)
 	d_y *= dist_inv;
 	body1.v_y += d_y * force * timestep / body1.m;
 	body2.v_y -= d_y * force * timestep / body2.m;
+
 }
 
-void process_bodies(body* bodies, size_t num_bodies, float timestep)
+void process_bodies(std::vector<body>& bodies, float timestep)
 {
-	for (size_t i = 0; i < num_bodies - 1; i++)
+
+	for (auto it = bodies.begin(); it != bodies.end() - 1; ++it)
 	{
-		for (size_t j = i + 1; j < num_bodies; j++)
+		for (auto it2 = it + 1; it2 != bodies.end(); ++it2)
 		{
-			calc_force(bodies[i], bodies[j], timestep);
+			calc_force(*it, *it2, timestep);
 		}
 	}
+
 }
 
-void update_positions(body* bodies, size_t num_bodies, float timestep)
+void update_positions(std::vector<body>& bodies, float timestep)
 {
-	for (size_t i = 0; i < num_bodies; i++)
+
+	for (body& it : bodies)
 	{
-		bodies[i].x += 0.5 * bodies[i].v_x * timestep;
-		bodies[i].y += 0.5 * bodies[i].v_y * timestep;
+		it.x += 0.5 * it.v_x * timestep;
+		it.y += 0.5 * it.v_y * timestep;
 	}
+
 }
