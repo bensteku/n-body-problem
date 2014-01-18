@@ -27,13 +27,13 @@ void render_shapes(sf::RenderWindow& window, const std::vector<sf::CircleShape>&
 	}
 }
 
-void update_shapes(sf::RenderWindow& window, std::vector<sf::CircleShape>& shapes, const std::vector<body>& bodies, float zoom)
+void update_shapes(sf::RenderWindow& window, std::vector<sf::CircleShape>& shapes, const std::vector<body>& bodies, float x_offset, float y_offset, float zoom)
 {
 	for (size_t i = 0; i < bodies.size(); i++)
 	{
 		shapes[i].setRadius(bodies[i].m / (settings::mass_radius_factor * zoom));
-		float x_pos = settings::window_width_h + settings::window_width_h * bodies[i].x / (100 * zoom);
-		float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * bodies[i].y / (100 * zoom);
+		float x_pos = settings::window_width_h + settings::window_width_h * (bodies[i].x + x_offset) / (100 * zoom);
+		float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * (bodies[i].y + y_offset) / (100 * zoom);
 		shapes[i].setPosition(x_pos, y_pos);
 	}
 }
