@@ -27,6 +27,9 @@
     <ClCompile Include="render\render.cpp">
       <Filter>Quelldateien</Filter>
     </ClCompile>
+    <ClCompile Include="render\input.cpp">
+      <Filter>Quelldateien</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="misc\settings.hpp">
@@ -39,6 +42,9 @@
       <Filter>Headerdateien</Filter>
     </ClInclude>
     <ClInclude Include="render\render.hpp">
+      <Filter>Headerdateien</Filter>
+    </ClInclude>
+    <ClInclude Include="render\input.hpp">
       <Filter>Headerdateien</Filter>
     </ClInclude>
   </ItemGroup>

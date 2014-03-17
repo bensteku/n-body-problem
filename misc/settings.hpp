@@ -19,4 +19,7 @@ namespace settings
 	static float constexpr mass_radius_factor = 200;
 
 	static float constexpr pi = 3.14159265358;
+
+	static float constexpr zoom_modifier = 0.1;
+	static float constexpr drag_modifier = 3.0;
 }

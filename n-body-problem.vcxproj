@@ -138,12 +138,14 @@
     <ClCompile Include="body\body.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="misc\util.cpp" />
+    <ClCompile Include="render\input.cpp" />
     <ClCompile Include="render\render.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="body\body.hpp" />
     <ClInclude Include="misc\settings.hpp" />
     <ClInclude Include="misc\util.hpp" />
+    <ClInclude Include="render\input.hpp" />
     <ClInclude Include="render\render.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
