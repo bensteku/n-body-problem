@@ -48,4 +48,10 @@
       <Filter>Headerdateien</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <Font Include="data\fonts\routed-gothic.ttf" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+  </ItemGroup>
 </Project>

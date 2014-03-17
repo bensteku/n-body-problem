@@ -6,6 +6,7 @@
 
 struct body
 {
+
 	float m;
 	float r;
 
@@ -14,6 +15,7 @@ struct body
 
 	float v_x;
 	float v_y;
+
 };
 
 // initialization methods
@@ -23,4 +25,3 @@ std::vector<body> init_bodies_normal(size_t num_bodies, float min_mass, float ma
 
 void calc_force(body& body1, body& body2, float timestep);
 void process_bodies(std::vector<body>& bodies, float timestep);
-void update_positions(std::vector<body>& bodies, float timestep);

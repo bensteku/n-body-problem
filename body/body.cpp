@@ -141,15 +141,15 @@ void process_bodies(std::vector<body>& bodies, float timestep)
 		}
 	}
 
-}
-
-void update_positions(std::vector<body>& bodies, float timestep)
-{
-
 	for (body& it : bodies)
 	{
 		it.x += 0.5 * it.v_x * timestep;
 		it.y += 0.5 * it.v_y * timestep;
 	}
+
+}
+
+void process_bodies_simd(std::vector<body>& bodies, float timestep)
+{
 
 }

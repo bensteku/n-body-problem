@@ -19,15 +19,33 @@ std::vector<sf::CircleShape> init_shapes(const std::vector<body>& bodies)
 	return shapes;
 }
 
-void render_shapes(sf::RenderWindow& window, const std::vector<sf::CircleShape>& shapes)
+Renderer::Renderer(const std::string file_path)
+{
+	if (!m_font.loadFromFile(file_path))
+		exit(-1);
+	m_fps_counter.setFont(m_font);
+	m_fps_counter.setCharacterSize(12);
+	m_fps_counter.setFillColor(sf::Color::Yellow);
+	m_clock.restart();
+}
+
+void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShape>& shapes, input_settings& is)
 {
 	for (const sf::CircleShape& it : shapes)
 	{
 		window.draw(it);
 	}
+	if (is.f_pressed)
+	{
+		float frame_time = m_clock.getElapsedTime().asSeconds();
+		frame_time = 1.0 / frame_time;
+		m_fps_counter.setString(m_fps + std::to_string(int(frame_time)));
+		window.draw(m_fps_counter);
+		m_clock.restart();
+	}
 }
 
-void update_shapes(sf::RenderWindow& window, std::vector<sf::CircleShape>& shapes, const std::vector<body>& bodies, float x_offset, float y_offset, float zoom)
+void Renderer::update_shapes(sf::RenderWindow& window, std::vector<sf::CircleShape>& shapes, const std::vector<body>& bodies, float x_offset, float y_offset, float zoom)
 {
 	for (size_t i = 0; i < bodies.size(); i++)
 	{

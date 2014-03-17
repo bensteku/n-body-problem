@@ -148,6 +148,12 @@
     <ClInclude Include="render\input.hpp" />
     <ClInclude Include="render\render.hpp" />
   </ItemGroup>
+  <ItemGroup>
+    <Font Include="data\fonts\routed-gothic.ttf" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

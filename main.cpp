@@ -9,9 +9,8 @@
 #include "render/input.hpp"
 
 // TODO:
-// - draw FPS
+// - propagate FPS
 // - add coordinate system (and an on/off toggle for it)
-// - deal with collision
 // - add fixed bodies
 // - add colored bodies and add some way to track their trajectories
 // - seperate gui and calculations into threads
@@ -22,29 +21,32 @@ int main(int argc, char* argv[])
 {
 
 	sf::RenderWindow window(sf::VideoMode(settings::window_width, settings::window_height), "n body problem");
-	window.setFramerateLimit(settings::frame_rate);
+	window.setFramerateLimit(settings::frame_rate_cap);
+
+	Renderer renderer;
 
 	// bodies will be created in world space from -100 to 100 initially
 	//std::vector<body> bodies = init_bodies_uniform(settings::n_bodies, 2000, 2000);
-	std::vector<body> bodies = init_bodies_circle(settings::n_bodies, 2000, 2000, 20);
+	std::vector<body> bodies = init_bodies_circle(settings::n_bodies, 2000, 2000, 50);
 	//std::vector<body> bodies = init_bodies_normal(settings::n_bodies, 2000, 2000);
 	std::vector<sf::CircleShape> shapes = init_shapes(bodies);
 
 	// set up the struct that will contain information about the user's inputs that are relevant
-	// the main thread receiving input events will write into it, the rendering read from it
+	// the main thread, which is handling input events, will write into it, the rendering read from it
 	// (events being handled by the main thread is the recommended way for SFML)
 	input_settings input_info;
 
 	while (window.isOpen())
 	{
-		window.clear();
 		process_inputs(window, input_info);
-		render_shapes(window, shapes);
+
+		window.clear();
+		renderer.render(window, shapes, input_info);
 		window.display();
 
 		process_bodies(bodies, settings::timestep);
-		update_positions(bodies, settings::timestep);
-		update_shapes(window, shapes, bodies, input_info.center_x, input_info.center_y, input_info.zoom);
+
+		renderer.update_shapes(window, shapes, bodies, input_info.center_x, input_info.center_y, input_info.zoom);
 	}
 
 	return 0;

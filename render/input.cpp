@@ -43,15 +43,21 @@ void process_inputs(sf::Window& window, input_settings& is)
 		}
 		else if (event.type == sf::Event::KeyPressed)
 		{
-			if (event.key.scancode == sf::Keyboard::Scan::R)
+			switch (event.key.scancode)
 			{
-				is.zoom = 1.0;
-				is.center_x = 0;
-				is.center_y = 0;
-			}
-			else if (event.key.scancode == sf::Keyboard::Scan::LControl)
-			{
-				is.ctrl_pressed = true;
+				case sf::Keyboard::Scan::R:
+					is.zoom = 1.0;
+					is.center_x = 0;
+					is.center_y = 0;
+					break;
+				case sf::Keyboard::Scan::LControl:
+					is.ctrl_pressed = true;
+					break;
+				case sf::Keyboard::Scan::F:
+					is.f_pressed = !is.f_pressed;
+					break;
+				default:
+					break;
 			}
 		}
 		else if (event.type == sf::Event::KeyReleased)
