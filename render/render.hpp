@@ -13,9 +13,11 @@ class Renderer
 {
 	private:
 		sf::Font m_font;
-		sf::Text m_fps_counter;
+		sf::Text m_fps_text;
 		sf::Clock m_clock;
-		std::string m_fps = "FPS: ";
+		std::string m_fps_string = "FPS: ";
+
+		int m_frame_counter = 1;
 	public:
 		Renderer(const std::string file_path="./data/fonts/routed-gothic.ttf");
 		void render(sf::RenderWindow& window, const std::vector<sf::CircleShape>& shapes, input_settings& is);

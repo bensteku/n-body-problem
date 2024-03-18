@@ -15,7 +15,7 @@
 // - add colored bodies and add some way to track their trajectories
 // - seperate gui and calculations into threads
 // - eventually: have a small gui where user can pick between initialization methods or add new bodies by clicking, with mass/size being determined by the duration of the click; also bodies should be destroyable by clicking on them
-// - run processing with SIMD and/or GPU
+// - run processing with some combination of SIMD, multi-threading and GPU
 
 int main(int argc, char* argv[]) 
 {

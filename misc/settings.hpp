@@ -12,6 +12,7 @@ namespace settings
 	static float constexpr frame_rate_cap = 10000;
 	static float constexpr zoom_modifier = 0.1;
 	static float constexpr drag_modifier = 3.0;
+	static int constexpr fps_smoother = 1000;
 
 	// physics settings
 	static size_t constexpr n_bodies = 60;
