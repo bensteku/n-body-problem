@@ -4,6 +4,7 @@
 #include <iostream>
 #include <immintrin.h>
 #include <malloc.h>
+#include <limits>
 
 #include "../misc/util.hpp"
 
@@ -95,7 +96,7 @@ std::vector<body> init_bodies_normal(size_t num_bodies, float min_mass, float ma
 
 }
 
-void calc_force(body& body1, body& body2, float timestep)
+void calc_force(body& body1, body& body2)
 {
 
 	float d_x = body1.x - body2.x;
@@ -122,13 +123,13 @@ void calc_force(body& body1, body& body2, float timestep)
 	d_x *= dist_inv;
 	// then multiply the normalized direction component with the force and the timestep and divide by mass to get
 	// the velocity component caused by the force in that direction
-	body1.v_x += d_x * force * timestep / body1.m;
-	body2.v_x -= d_x * force * timestep / body2.m;
+	body1.v_x += d_x * force * settings::timestep / body1.m;
+	body2.v_x -= d_x * force * settings::timestep / body2.m;
 	
 	// same for y
 	d_y *= dist_inv;
-	body1.v_y += d_y * force * timestep / body1.m;
-	body2.v_y -= d_y * force * timestep / body2.m;
+	body1.v_y += d_y * force * settings::timestep / body1.m;
+	body2.v_y -= d_y * force * settings::timestep / body2.m;
 
 }
 
@@ -148,6 +149,17 @@ inline float reduce_register(__m256 v)
 	// add the register to a shuffled version of itself, where the shuffle moves the second 32 bits into the first 32 bits
 	vlow = _mm_add_ss(vlow, _mm_shuffle_ps(vlow, vlow, _MM_SHUFFLE(1, 0, 3, 4)));  
 	return  _mm_cvtss_f32(vlow);  // extract the overall sum from the first 32 bits
+}
+
+// function that returns a bitmask for values that are infinite
+// taken from https://stackoverflow.com/a/30713827
+inline __m256 is_infinity(__m256 x) {
+	const __m256 SIGN_MASK = _mm256_set1_ps(-0.0);
+	const __m256 INF = _mm256_set1_ps(std::numeric_limits<float>::infinity());
+
+	x = _mm256_andnot_ps(SIGN_MASK, x);
+	x = _mm256_cmp_ps(x, INF, _CMP_EQ_OQ);
+	return x;
 }
 
 void process_bodies_simd(std::vector<body>& bodies) 
@@ -313,6 +325,7 @@ void process_bodies_simd(std::vector<body>& bodies)
 	__m256 *vy_vec = new __m256[num_packed_elements];
 	// single and tmp registers for the element the iteration is currently at
 	const __m256 g_reg = _mm256_set_ps(settings::g, settings::g, settings::g, settings::g, settings::g, settings::g, settings::g, settings::g);
+	const __m256 onehalf_reg = _mm256_set1_ps(0.5);
 	__m256 m_it_reg;
 	__m256 x_it_reg;
 	__m256 y_it_reg;
@@ -335,15 +348,16 @@ void process_bodies_simd(std::vector<body>& bodies)
 	for (size_t i = 0; i < num_packed_elements; i++)
 	{
 		const size_t indices[8] = { std::min(i * 8, num_elements - 1), std::min(i * 8 + 1, num_elements - 1), std::min(i * 8 + 2, num_elements - 1), std::min(i * 8 + 3, num_elements - 1), std::min(i * 8 + 4, num_elements - 1), std::min(i * 8 + 5, num_elements - 1), std::min(i * 8 + 6, num_elements - 1), std::min(i * 8 + 7, num_elements - 1) };
-		x_vec[i] = _mm256_set_ps(bodies[indices[0]].x, bodies[indices[1]].x, bodies[indices[2]].x, bodies[indices[3]].x, bodies[indices[4]].x, bodies[indices[5]].x, bodies[indices[6]].x, bodies[indices[7]].x);
-		y_vec[i] = _mm256_set_ps(bodies[indices[0]].y, bodies[indices[1]].y, bodies[indices[2]].y, bodies[indices[3]].y, bodies[indices[4]].y, bodies[indices[5]].y, bodies[indices[6]].y, bodies[indices[7]].y);
-		m_vec[i] = _mm256_set_ps(bodies[indices[0]].m, bodies[indices[1]].m, bodies[indices[2]].m, bodies[indices[3]].m, bodies[indices[4]].m, bodies[indices[5]].m, bodies[indices[6]].m, bodies[indices[7]].m);
-		r_vec[i] = _mm256_set_ps(bodies[indices[0]].r, bodies[indices[1]].r, bodies[indices[2]].r, bodies[indices[3]].r, bodies[indices[4]].r, bodies[indices[5]].r, bodies[indices[6]].r, bodies[indices[7]].r);
-		vx_vec[i] = _mm256_set_ps(bodies[indices[0]].v_x, bodies[indices[1]].v_x, bodies[indices[2]].v_x, bodies[indices[3]].v_x, bodies[indices[4]].v_x, bodies[indices[5]].v_x, bodies[indices[6]].v_x, bodies[indices[7]].v_x);
-		vy_vec[i] = _mm256_set_ps(bodies[indices[0]].v_y, bodies[indices[1]].v_y, bodies[indices[2]].v_y, bodies[indices[3]].v_y, bodies[indices[4]].v_y, bodies[indices[5]].v_y, bodies[indices[6]].v_y, bodies[indices[7]].v_y);
+		x_vec[i] = _mm256_set_ps(bodies[indices[7]].x, bodies[indices[6]].x, bodies[indices[5]].x, bodies[indices[4]].x, bodies[indices[3]].x, bodies[indices[2]].x, bodies[indices[1]].x, bodies[indices[0]].x);
+		y_vec[i] = _mm256_set_ps(bodies[indices[7]].y, bodies[indices[6]].y, bodies[indices[5]].y, bodies[indices[4]].y, bodies[indices[3]].y, bodies[indices[2]].y, bodies[indices[1]].y, bodies[indices[0]].y);
+		m_vec[i] = _mm256_set_ps(bodies[indices[7]].m, bodies[indices[6]].m, bodies[indices[5]].m, bodies[indices[4]].m, bodies[indices[3]].m, bodies[indices[2]].m, bodies[indices[1]].m, bodies[indices[0]].m);
+		r_vec[i] = _mm256_set_ps(bodies[indices[7]].r, bodies[indices[6]].r, bodies[indices[5]].r, bodies[indices[4]].r, bodies[indices[3]].r, bodies[indices[2]].r, bodies[indices[1]].r, bodies[indices[0]].r);
+		vx_vec[i] = _mm256_set_ps(bodies[indices[7]].v_x, bodies[indices[6]].v_x, bodies[indices[5]].v_x, bodies[indices[4]].v_x, bodies[indices[3]].v_x, bodies[indices[2]].v_x, bodies[indices[1]].v_x, bodies[indices[0]].v_x);
+		vy_vec[i] = _mm256_set_ps(bodies[indices[7]].v_y, bodies[indices[6]].v_y, bodies[indices[5]].v_y, bodies[indices[4]].v_y, bodies[indices[3]].v_y, bodies[indices[2]].v_y, bodies[indices[1]].v_y, bodies[indices[0]].v_y);
 	}
 
 	// iterate over every single body and perform SIMD operations with it and the entire rest of the bodies vector
+	size_t counter = 0;
 	for (body& it : bodies)
 	{
 		// load the current body's values into the tmp registers
@@ -367,7 +381,7 @@ void process_bodies_simd(std::vector<body>& bodies)
 				{
 					tmp[j] = 1.0;
 				}
-				size_check_reg = _mm256_set_ps(tmp[0], tmp[1], tmp[2], tmp[3], tmp[4], tmp[5], tmp[6], tmp[7]);
+				size_check_reg = _mm256_set_ps(tmp[7], tmp[6], tmp[5], tmp[4], tmp[3], tmp[2], tmp[1], tmp[0]);
 			}
 			else
 			{
@@ -402,25 +416,30 @@ void process_bodies_simd(std::vector<body>& bodies)
 
 			// get the inverse square root of the distance
 			dist_reg = _mm256_invsqrt_ps(dist_reg);
+			dist_reg = _mm256_and_ps(dist_reg, _mm256_xor_ps(is_infinity(dist_reg), _mm256_castsi256_ps(_mm256_set1_epi64x(-1))));
 			// normalize the x and y components with it
-			dx_reg = _mm256_div_ps(dx_reg, dist_reg);
-			dy_reg = _mm256_div_ps(dy_reg, dist_reg);
+			dx_reg = _mm256_mul_ps(dx_reg, dist_reg);
+			dy_reg = _mm256_mul_ps(dy_reg, dist_reg);
 
 			// calculating the velocity
 			// x, for the iterator body
 			vel_reg = _mm256_mul_ps(force_reg, dx_reg);
 			vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
 			dx_reg = _mm256_div_ps(vel_reg, m_it_reg);  // overwriting the dx_reg, as vel_reg already contains the results we need it for
-			it.v_x += reduce_register(dx_reg);
+			dx_reg = _mm256_mul_ps(onehalf_reg, dx_reg);
+			it.v_x -= reduce_register(dx_reg);
 			// for the other bodies
 			dx_reg = _mm256_div_ps(vel_reg, m_vec[i]);
+			dx_reg = _mm256_mul_ps(onehalf_reg, dx_reg);
 			// y, for the iterator body
 			vel_reg = _mm256_mul_ps(force_reg, dy_reg);
 			vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
 			dy_reg = _mm256_div_ps(vel_reg, m_it_reg);  // same as above
-			it.v_y += reduce_register(dy_reg);
+			dy_reg = _mm256_mul_ps(onehalf_reg, dy_reg);
+			it.v_y -= reduce_register(dy_reg);
 			// for the other bodies
 			dy_reg = _mm256_div_ps(vel_reg, m_vec[i]);
+			dy_reg = _mm256_mul_ps(onehalf_reg, dy_reg);
 
 			// unpack the results for the other bodies and write them into their respective structs
 			float unpacked_x[8];
@@ -430,13 +449,14 @@ void process_bodies_simd(std::vector<body>& bodies)
 			// write the floats into their respective body struct
 			for (size_t j = 0; j < 8; j++)
 			{
-				if ((i * 8 + j) < num_elements)
+				if ((i * 8 + j) < num_elements and (i * 8 + j) != counter)
 				{
 					bodies[i * 8 + j].v_x += unpacked_x[j];
 					bodies[i * 8 + j].v_y += unpacked_y[j];
 				}
 			}
 		}
+		counter += 1;
 	}
 	delete[] x_vec;
 	delete[] y_vec;
@@ -448,27 +468,27 @@ void process_bodies_simd(std::vector<body>& bodies)
 	// TODO
 	for (body& it : bodies)
 	{
-		it.x += 0.5 * it.v_x * timestep;
-		it.y += 0.5 * it.v_y * timestep;
+		it.x += 0.5 * it.v_x * settings::timestep;
+		it.y += 0.5 * it.v_y * settings::timestep;
 	}
 
 }
 
-void process_bodies(std::vector<body>& bodies, float timestep)
+void process_bodies(std::vector<body>& bodies)
 {
 
 	for (auto it = bodies.begin(); it != bodies.end() - 1; ++it)
 	{
 		for (auto it2 = it + 1; it2 != bodies.end(); ++it2)
 		{
-			calc_force(*it, *it2, timestep);
+			calc_force(*it, *it2);
 		}
 	}
 	
 	for (body& it : bodies)
 	{
-		it.x += 0.5 * it.v_x * timestep;
-		it.y += 0.5 * it.v_y * timestep;
+		it.x += 0.5 * it.v_x * settings::timestep;
+		it.y += 0.5 * it.v_y * settings::timestep;
 	}
 
 }

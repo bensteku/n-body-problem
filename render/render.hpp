@@ -16,6 +16,7 @@ class Renderer
 		sf::Text m_fps_text;
 		sf::Clock m_clock;
 		std::string m_fps_string = "FPS: ";
+		std::string m_processing_type = "SISD";
 
 		int m_frame_counter = 1;
 	public:

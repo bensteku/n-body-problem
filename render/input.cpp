@@ -56,6 +56,12 @@ void process_inputs(sf::Window& window, input_settings& is)
 				case sf::Keyboard::Scan::F:
 					is.f_pressed = !is.f_pressed;
 					break;
+				case sf::Keyboard::Scan::S:
+					is.s_pressed += 1;
+					// wrap back around to 0
+					if (is.s_pressed > 1)
+						is.s_pressed = 0;
+					break;
 				default:
 					break;
 			}

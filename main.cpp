@@ -9,11 +9,10 @@
 #include "render/input.hpp"
 
 // TODO:
-// - propagate FPS
 // - add coordinate system (and an on/off toggle for it)
 // - add fixed bodies
 // - add colored bodies and add some way to track their trajectories
-// - seperate gui and calculations into threads
+// - seperate calculations into threads
 // - eventually: have a small gui where user can pick between initialization methods or add new bodies by clicking, with mass/size being determined by the duration of the click; also bodies should be destroyable by clicking on them
 // - run processing with some combination of SIMD, multi-threading and GPU
 
@@ -44,7 +43,12 @@ int main(int argc, char* argv[])
 		renderer.render(window, shapes, input_info);
 		window.display();
 
-		process_bodies(bodies, settings::timestep);
+		if (input_info.s_pressed == 1)
+			process_bodies_simd(bodies);
+		else if (input_info.s_pressed == 0)
+			process_bodies(bodies);
+		else
+			exit(0);  //TODO: CUDA processing
 
 		renderer.update_shapes(window, shapes, bodies, input_info.center_x, input_info.center_y, input_info.zoom);
 	}

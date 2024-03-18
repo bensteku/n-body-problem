@@ -16,6 +16,8 @@ struct input_settings
 	bool ctrl_pressed = false;
 	// toggle for showing fps
 	bool f_pressed = false;
+	// toggle for SIMD and CUDA processing
+	unsigned int s_pressed = 0;
 };
 
 void process_inputs(sf::Window& window, input_settings& is);

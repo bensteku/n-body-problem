@@ -37,11 +37,23 @@ void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShap
 	}
 	if (is.f_pressed)
 	{
+		switch (is.s_pressed)
+		{
+			case 0:
+				m_processing_type = "SISD";
+				break;
+			case 1:
+				m_processing_type = "SIMD";
+				break;
+			case 2:
+				m_processing_type = "CUDA";
+				break;
+		}
 		if (m_frame_counter % settings::fps_smoother == 0)
 		{
 			float frame_time = m_clock.getElapsedTime().asSeconds();
 			frame_time = (float)m_frame_counter / frame_time;
-			m_fps_text.setString(m_fps_string + std::to_string(int(frame_time)));
+			m_fps_text.setString(m_fps_string + std::to_string(int(frame_time)) + "\n" + m_processing_type);
 			m_clock.restart();
 			m_frame_counter = 1;
 		}

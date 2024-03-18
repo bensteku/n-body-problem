@@ -24,6 +24,6 @@ std::vector<body> init_bodies_uniform(size_t num_bodies, float min_mass, float m
 std::vector<body> init_bodies_circle(size_t num_bodies, float min_mass, float max_mass, float radius = 50, float deviation = 0);
 std::vector<body> init_bodies_normal(size_t num_bodies, float min_mass, float max_mass, float center_x = 0, float center_y = 0, float std_x = 25, float std_y = 25);
 
-void calc_force(body& body1, body& body2, float timestep);
-void calc_force_simd(std::vector<body>& bodies);
-void process_bodies(std::vector<body>& bodies, float timestep);
+void calc_force(body& body1, body& body2);
+void process_bodies_simd(std::vector<body>& bodies);
+void process_bodies(std::vector<body>& bodies);
