@@ -3,7 +3,6 @@
 #include <random>
 #include <iostream>
 #include <immintrin.h>
-#include <malloc.h>
 #include <limits>
 
 #include "../misc/util.hpp"
@@ -164,152 +163,6 @@ inline __m256 is_infinity(__m256 x) {
 
 void process_bodies_simd(std::vector<body>& bodies) 
 {
-	/*
-	const size_t num_elements = bodies.size();
-	const size_t num_packed_elements = 1 + num_elements / 8;  // +1?
-
-	// init registers (maybe move this outside so this is only done once)
-	// values from the entire array
-	__m256* x_vec = static_cast<__m256*>(_aligned_malloc(32, num_packed_elements * sizeof(__m256)));
-	__m256* y_vec = static_cast<__m256*>(_aligned_malloc(32, num_packed_elements * sizeof(__m256)));
-	__m256* m_vec = static_cast<__m256*>(_aligned_malloc(32, num_packed_elements * sizeof(__m256)));
-	__m256* r_vec = static_cast<__m256*>(_aligned_malloc(32, num_packed_elements * sizeof(__m256)));
-	__m256* vx_vec = static_cast<__m256*>(_aligned_malloc(32, num_packed_elements * sizeof(__m256)));
-	__m256* vy_vec = static_cast<__m256*>(_aligned_malloc(32, num_packed_elements * sizeof(__m256)));
-	// single and tmp registers for the element the iteration is currently at
-	__m256* g_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* m_it_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* x_it_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* y_it_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* vx_it_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* vy_it_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* r_it_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* r_add_it_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* dx_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* dx_squ_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* dy_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* dy_squ_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* dist_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* force_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* vel_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* delta_t_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-	__m256* nan_check_reg = static_cast<__m256*>(_aligned_malloc(8, sizeof(__m256)));
-
-	// load current values into the registers
-	for (size_t i = 0; i < num_packed_elements; i++)
-	{
-		const size_t indices[8] = { std::min(i * 8, num_elements - 1), std::min(i * 8 + 1, num_elements - 1), std::min(i * 8 + 2, num_elements - 1), std::min(i * 8 + 3, num_elements - 1), std::min(i * 8 + 4, num_elements - 1), std::min(i * 8 + 5, num_elements - 1), std::min(i * 8 + 6, num_elements - 1), std::min(i * 8 + 7, num_elements - 1) };
-		x_vec[i] = _mm256_set_ps(bodies[indices[0]].x, bodies[indices[1]].x, bodies[indices[2]].x, bodies[indices[3]].x, bodies[indices[4]].x, bodies[indices[5]].x, bodies[indices[6]].x, bodies[indices[7]].x);
-		y_vec[i] = _mm256_set_ps(bodies[indices[0]].y, bodies[indices[1]].y, bodies[indices[2]].y, bodies[indices[3]].y, bodies[indices[4]].y, bodies[indices[5]].y, bodies[indices[6]].y, bodies[indices[7]].y);
-		m_vec[i] = _mm256_set_ps(bodies[indices[0]].m, bodies[indices[1]].m, bodies[indices[2]].m, bodies[indices[3]].m, bodies[indices[4]].m, bodies[indices[5]].m, bodies[indices[6]].m, bodies[indices[7]].m);
-		r_vec[i] = _mm256_set_ps(bodies[indices[0]].r, bodies[indices[1]].r, bodies[indices[2]].r, bodies[indices[3]].r, bodies[indices[4]].r, bodies[indices[5]].r, bodies[indices[6]].r, bodies[indices[7]].r);
-		vx_vec[i] = _mm256_set_ps(bodies[indices[0]].v_x, bodies[indices[1]].v_x, bodies[indices[2]].v_x, bodies[indices[3]].v_x, bodies[indices[4]].v_x, bodies[indices[5]].v_x, bodies[indices[6]].v_x, bodies[indices[7]].v_x);
-		vy_vec[i] = _mm256_set_ps(bodies[indices[0]].v_y, bodies[indices[1]].v_y, bodies[indices[2]].v_y, bodies[indices[3]].v_y, bodies[indices[4]].v_y, bodies[indices[5]].v_y, bodies[indices[6]].v_y, bodies[indices[7]].v_y);
-	}
-	// load gravity and timestep vectors (this could also be done outside and only once)
-	*g_reg = _mm256_set_ps(settings::g, settings::g, settings::g, settings::g, settings::g, settings::g, settings::g, settings::g);
-	*delta_t_reg = _mm256_set_ps(settings::timestep, settings::timestep, settings::timestep, settings::timestep, settings::timestep, settings::timestep, settings::timestep, settings::timestep);
-
-	// iterate over every single body and perform SIMD operations with it and the entire rest of the bodies vector
-	for (body& it : bodies)
-	{
-		// load the current body's values into the tmp registers
-		*m_it_reg = _mm256_set_ps(it.m, it.m, it.m, it.m, it.m, it.m, it.m, it.m);
-		*x_it_reg = _mm256_set_ps(it.x, it.x, it.x, it.x, it.x, it.x, it.x, it.x);
-		*y_it_reg = _mm256_set_ps(it.y, it.y, it.y, it.y, it.y, it.y, it.y, it.y);
-		*r_it_reg = _mm256_set_ps(it.r, it.r, it.r, it.r, it.r, it.r, it.r, it.r);
-		// the v registers will acumulate the different velocity components and add them to body in question as a sum later, see below
-		*vx_it_reg = _mm256_set1_ps(0.0);
-		*vy_it_reg = _mm256_set1_ps(0.0);
-
-		// run the formulas for 8 bodies at a time
-		for (size_t i = 0; i < num_packed_elements; i++)
-		{
-			// distances
-			*dx_reg = _mm256_sub_ps(*x_it_reg, x_vec[i]);
-			*dx_squ_reg = _mm256_mul_ps(*dx_reg, *dx_reg);
-			*dy_reg = _mm256_sub_ps(*y_it_reg, y_vec[i]);
-			*dy_squ_reg = _mm256_mul_ps(*dy_reg, *dy_reg);
-			*dist_reg = _mm256_add_ps(*dx_squ_reg, *dy_squ_reg);
-
-			// collision check to avoid NaNs
-			// this will conveniently also zero out all calculations between
-			// the iterator element and its version from the overall array
-			// add up the two radiuses
-			*r_add_it_reg = _mm256_add_ps(*r_it_reg, r_vec[i]);
-			// square them to make them equivalent to the squared distances above
-			*r_add_it_reg = _mm256_mul_ps(*r_add_it_reg, *r_add_it_reg);
-			// create a mask that is 0 for all body pairs whose distance is smaller than the sum of their radii
-			*nan_check_reg = _mm256_cmp_ps(*r_add_it_reg, *dist_reg, _CMP_LT_OQ);
-
-			// calculate force (using the force register as a tmp as well for the intermediate steps)
-			*force_reg = _mm256_mul_ps(*m_it_reg, m_vec[i]);
-			*force_reg = _mm256_mul_ps(*force_reg, *g_reg);
-			*force_reg = _mm256_div_ps(*force_reg, *dist_reg);
-			// null out all entries based on our mask
-			*force_reg = _mm256_and_ps(*force_reg, *nan_check_reg);
-
-			// get the inverse square root of the distance
-			*dist_reg = _mm256_invsqrt_ps(*dist_reg);
-			// normalize the x and y components with it
-			*dx_reg = _mm256_div_ps(*dx_reg, *dist_reg);
-			*dy_reg = _mm256_div_ps(*dy_reg, *dist_reg);
-
-			// calculating the velocity
-			// x, for the iterator body
-			*vel_reg = _mm256_mul_ps(*force_reg, *dx_reg);
-			*vel_reg = _mm256_mul_ps(*vel_reg, *delta_t_reg);
-			*dx_reg = _mm256_div_ps(*vel_reg, *m_it_reg);  // overwriting the dx_reg, as vel_reg already contains the results we need it for
-			it.v_x += reduce_register(*dx_reg);
-			// for the other bodies
-			*dx_reg = _mm256_div_ps(*vel_reg, m_vec[i]);
-			// y, for the iterator body
-			*vel_reg = _mm256_mul_ps(*force_reg, *dy_reg);
-			*vel_reg = _mm256_mul_ps(*vel_reg, *delta_t_reg);
-			*dy_reg = _mm256_div_ps(*vel_reg, *m_it_reg);  // same as above
-			it.v_y += reduce_register(*dy_reg);
-			// for the other bodies
-			*dy_reg = _mm256_div_ps(*vel_reg, m_vec[i]);
-
-			// unpack the results for the other bodies and write them into their respective structs
-			float unpacked_x[8];
-			float unpacked_y[8];
-			std::memcpy(unpacked_x, dx_reg, sizeof(float) * 8);
-			std::memcpy(unpacked_y, dy_reg, sizeof(float) * 8);
-			// write the floats into their respective body struct
-			for (size_t j = 0; j < 8; j++)
-			{
-				if ((i * 8 + j) < num_elements)
-				{
-					bodies[i * 8 + j].v_x += unpacked_x[j];
-					bodies[i * 8 + j].v_y += unpacked_y[j];
-				}		
-			}			
-		}
-	}
-	_aligned_free(x_vec);
-	_aligned_free(y_vec);
-	_aligned_free(m_vec);
-	_aligned_free(r_vec);
-	_aligned_free(vx_vec);
-	_aligned_free(vy_vec);
-	_aligned_free(g_reg);
-	_aligned_free(x_it_reg);
-	_aligned_free(y_it_reg);
-	_aligned_free(vx_it_reg);
-	_aligned_free(vy_it_reg);
-	_aligned_free(r_it_reg);
-	_aligned_free(r_add_it_reg);
-	_aligned_free(dx_reg);
-	_aligned_free(dx_squ_reg);
-	_aligned_free(dy_reg);
-	_aligned_free(dy_squ_reg);
-	_aligned_free(dist_reg);
-	_aligned_free(force_reg);
-	_aligned_free(vel_reg);
-	_aligned_free(delta_t_reg);
-	_aligned_free(nan_check_reg);
-	*/
 
 	const size_t num_elements = bodies.size();
 	const size_t num_packed_elements = 1 + num_elements / 8;  // +1?
@@ -325,7 +178,6 @@ void process_bodies_simd(std::vector<body>& bodies)
 	__m256 *vy_vec = new __m256[num_packed_elements];
 	// single and tmp registers for the element the iteration is currently at
 	const __m256 g_reg = _mm256_set_ps(settings::g, settings::g, settings::g, settings::g, settings::g, settings::g, settings::g, settings::g);
-	const __m256 onehalf_reg = _mm256_set1_ps(0.5);
 	__m256 m_it_reg;
 	__m256 x_it_reg;
 	__m256 y_it_reg;
@@ -426,20 +278,16 @@ void process_bodies_simd(std::vector<body>& bodies)
 			vel_reg = _mm256_mul_ps(force_reg, dx_reg);
 			vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
 			dx_reg = _mm256_div_ps(vel_reg, m_it_reg);  // overwriting the dx_reg, as vel_reg already contains the results we need it for
-			dx_reg = _mm256_mul_ps(onehalf_reg, dx_reg);
 			it.v_x -= reduce_register(dx_reg);
 			// for the other bodies
 			dx_reg = _mm256_div_ps(vel_reg, m_vec[i]);
-			dx_reg = _mm256_mul_ps(onehalf_reg, dx_reg);
 			// y, for the iterator body
 			vel_reg = _mm256_mul_ps(force_reg, dy_reg);
 			vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
 			dy_reg = _mm256_div_ps(vel_reg, m_it_reg);  // same as above
-			dy_reg = _mm256_mul_ps(onehalf_reg, dy_reg);
 			it.v_y -= reduce_register(dy_reg);
 			// for the other bodies
 			dy_reg = _mm256_div_ps(vel_reg, m_vec[i]);
-			dy_reg = _mm256_mul_ps(onehalf_reg, dy_reg);
 
 			// unpack the results for the other bodies and write them into their respective structs
 			float unpacked_x[8];
