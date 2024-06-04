@@ -14,11 +14,9 @@
 std::vector<body> init_bodies_uniform(size_t num_bodies, float min_mass, float max_mass)
 {
 
-	// set up rng
 	std::random_device dev;
 	std::mt19937 rng(dev());
 	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
-	// determine which dimension is bigger
 	std::uniform_real_distribution<float> x_uniform(-100, 100);
 	std::uniform_real_distribution<float> y_uniform(-100 * settings::aspect_ratio, 100 * settings::aspect_ratio);	
 
@@ -100,7 +98,7 @@ void calc_force(body& body1, body& body2, processing_args& pa)
 	float d_x = body1.x - body2.x;
 	float d_y = body1.y - body2.y;
 
-	float dist = d_x * d_x + d_y * d_y; // no square root needed here because the formula for the force squares it anyway
+	float dist = d_x * d_x + d_y * d_y;  // no square root needed here because the formula for the force squares it anyway
 
 	float force;
 	if ((body1.r + body2.r) * (body1.r + body2.r) >= dist)
