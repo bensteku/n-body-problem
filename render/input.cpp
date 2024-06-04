@@ -2,7 +2,7 @@
 
 #include "../misc/settings.hpp"
 
-void process_inputs(sf::Window& window, input_settings& is)
+void process_inputs(sf::Window& window, input_settings& is, processing_args& pa)
 {
 
 	sf::Event event;
@@ -56,11 +56,17 @@ void process_inputs(sf::Window& window, input_settings& is)
 				case sf::Keyboard::Scan::F:
 					is.f_pressed = !is.f_pressed;
 					break;
-				case sf::Keyboard::Scan::S:
-					is.s_pressed += 1;
-					// wrap back around to 0
-					if (is.s_pressed > 1)
-						is.s_pressed = 0;
+				case sf::Keyboard::Scan::NumpadPlus:
+					if (is.ctrl_pressed)
+						pa.timestep *= 1.1;
+					else
+						pa.g *= 1.1;
+					break;
+				case sf::Keyboard::Scan::NumpadMinus:
+					if (is.ctrl_pressed)
+						pa.timestep *= 0.9;
+					else
+						pa.g *= 0.9;
 					break;
 				default:
 					break;

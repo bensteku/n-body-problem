@@ -1,29 +1,37 @@
 #pragma once
 
+enum processing_type
+{
+	SISD,
+	SIMD,
+	CUDA
+};
+
 namespace settings
 {
 
 	// render settings
-	static unsigned int constexpr window_width = 1280;
-	static unsigned int constexpr window_height = 720;
-	static float constexpr window_width_h = window_width / 2.0;
-	static float constexpr window_height_h = window_height / 2.0;
-	static float constexpr aspect_ratio = (float)window_width / window_height;
-	static float constexpr frame_rate_cap = 10000;
-	static float constexpr zoom_modifier = 0.1;
-	static float constexpr drag_modifier = 6.0;
-	static int constexpr fps_smoother = 1;
+	static constexpr unsigned int window_width = 1280;
+	static constexpr unsigned int window_height = 720;
+	static constexpr float window_width_h = window_width / 2.0;
+	static constexpr float window_height_h = window_height / 2.0;
+	static constexpr float aspect_ratio = (float)window_width / window_height;
+	static constexpr float frame_rate_cap = 10000;
+	static constexpr float zoom_modifier = 0.1;
+	static constexpr float drag_modifier = 6.0;
+	static constexpr int fps_smoother = 500;
 
 	// physics settings
-	static size_t constexpr n_bodies = 8;
-	static float constexpr timestep = 0.005;
-	//static float constexpr g = 6.6743e-11;
-	static float constexpr g = 6.6743e-3;
+	static constexpr size_t n_bodies = 800;
+	static constexpr float timestep = 0.005;
+	//static constexpr float g = 6.6743e-11;
+	static constexpr float g = 6.6743e-3;
+	static constexpr processing_type pt = SIMD;
 
 	// drawing settings
-	static float constexpr mass_radius_factor = 200;
+	static constexpr float mass_radius_factor = 200;
 
 	// constants
-	static float constexpr pi = 3.14159265358;
+	static constexpr float pi = 3.14159265358;
 
 }

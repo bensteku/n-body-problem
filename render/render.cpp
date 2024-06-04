@@ -29,7 +29,7 @@ Renderer::Renderer(const std::string file_path)
 	m_clock.restart();
 }
 
-void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShape>& shapes, input_settings& is)
+void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShape>& shapes, input_settings& is, processing_args& pa)
 {
 	for (const sf::CircleShape& it : shapes)
 	{
@@ -37,15 +37,15 @@ void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShap
 	}
 	if (is.f_pressed)
 	{
-		switch (is.s_pressed)
+		switch (settings::pt)
 		{
-			case 0:
+			case SISD:
 				m_processing_type = "SISD";
 				break;
-			case 1:
+			case SIMD:
 				m_processing_type = "SIMD";
 				break;
-			case 2:
+			case CUDA:
 				m_processing_type = "CUDA";
 				break;
 		}
@@ -53,7 +53,10 @@ void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShap
 		{
 			float frame_time = m_clock.getElapsedTime().asSeconds();
 			frame_time = (float)m_frame_counter / frame_time;
-			m_fps_text.setString(m_fps_string + std::to_string(int(frame_time)) + "\n" + m_processing_type);
+			m_fps_text.setString(m_fps_string + std::to_string(int(frame_time)) + "\n" +
+								m_processing_type + "\n" +
+								m_gravity + std::to_string(pa.g) + "\n" +
+								m_timestep + std::to_string(pa.timestep));
 			m_clock.restart();
 			m_frame_counter = 1;
 		}
