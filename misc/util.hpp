@@ -3,6 +3,7 @@
 #include <bit>
 #include <limits>
 #include <cstdint>
+#include "immintrin.h"
 
 constexpr float rsqrt(float number) noexcept
 {
@@ -12,3 +13,6 @@ constexpr float rsqrt(float number) noexcept
         0x5f3759df - (std::bit_cast<std::uint32_t>(number) >> 1));
     return y * (1.5f - (number * 0.5f * y * y));
 }
+
+__m256 is_infinity(__m256 x);
+float reduce_register(__m256 v);
