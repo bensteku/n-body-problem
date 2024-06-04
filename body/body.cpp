@@ -129,7 +129,7 @@ void calc_force(body& body1, body& body2, processing_args& pa)
 
 }
 
-void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256* x_vec, __m256* y_vec, __m256* m_vec, __m256* r_vec, __m256* vx_vec, __m256* vy_vec) 
+void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256* x_vec, __m256* y_vec, __m256* m_vec, __m256* r_vec) 
 {
 
 	const size_t num_elements = bodies.size();
@@ -165,8 +165,6 @@ void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256*
 		y_vec[i] = _mm256_set_ps(bodies[indices[7]].y, bodies[indices[6]].y, bodies[indices[5]].y, bodies[indices[4]].y, bodies[indices[3]].y, bodies[indices[2]].y, bodies[indices[1]].y, bodies[indices[0]].y);
 		m_vec[i] = _mm256_set_ps(bodies[indices[7]].m, bodies[indices[6]].m, bodies[indices[5]].m, bodies[indices[4]].m, bodies[indices[3]].m, bodies[indices[2]].m, bodies[indices[1]].m, bodies[indices[0]].m);
 		r_vec[i] = _mm256_set_ps(bodies[indices[7]].r, bodies[indices[6]].r, bodies[indices[5]].r, bodies[indices[4]].r, bodies[indices[3]].r, bodies[indices[2]].r, bodies[indices[1]].r, bodies[indices[0]].r);
-		vx_vec[i] = _mm256_set_ps(bodies[indices[7]].v_x, bodies[indices[6]].v_x, bodies[indices[5]].v_x, bodies[indices[4]].v_x, bodies[indices[3]].v_x, bodies[indices[2]].v_x, bodies[indices[1]].v_x, bodies[indices[0]].v_x);
-		vy_vec[i] = _mm256_set_ps(bodies[indices[7]].v_y, bodies[indices[6]].v_y, bodies[indices[5]].v_y, bodies[indices[4]].v_y, bodies[indices[3]].v_y, bodies[indices[2]].v_y, bodies[indices[1]].v_y, bodies[indices[0]].v_y);
 	}
 
 	// iterate over every single body and perform SIMD operations with it and the entire rest of the bodies vector
@@ -177,9 +175,6 @@ void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256*
 		x_it_reg = _mm256_set_ps(it.x, it.x, it.x, it.x, it.x, it.x, it.x, it.x);
 		y_it_reg = _mm256_set_ps(it.y, it.y, it.y, it.y, it.y, it.y, it.y, it.y);
 		r_it_reg = _mm256_set_ps(it.r, it.r, it.r, it.r, it.r, it.r, it.r, it.r);
-		// the v registers will acumulate the different velocity components and add them to body in question as a sum later, see below
-		vx_it_reg = _mm256_set1_ps(0.0);
-		vy_it_reg = _mm256_set1_ps(0.0);
 
 		// run the formulas for 8 bodies at a time
 		for (size_t i = 0; i < num_packed_elements; i++)

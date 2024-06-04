@@ -48,8 +48,6 @@ int main(int argc, char* argv[])
 	__m256* y_vec;
 	__m256* m_vec;
 	__m256* r_vec;
-	__m256* vx_vec;
-	__m256* vy_vec;
 	if (settings::pt == SIMD)
 	{
 		const size_t num_elements = bodies.size();
@@ -59,8 +57,6 @@ int main(int argc, char* argv[])
 		y_vec = new __m256[num_packed_elements];
 		m_vec = new __m256[num_packed_elements];
 		r_vec = new __m256[num_packed_elements];
-		vx_vec = new __m256[num_packed_elements];
-		vy_vec = new __m256[num_packed_elements];
 	}
 	else
 	{
@@ -68,8 +64,6 @@ int main(int argc, char* argv[])
 		y_vec = nullptr;
 		m_vec = nullptr;
 		r_vec = nullptr;
-		vx_vec = nullptr;
-		vy_vec = nullptr;
 	}
 
 	while (window.isOpen())
@@ -86,7 +80,7 @@ int main(int argc, char* argv[])
 				process_bodies(bodies, processing_info);
 				break;
 			case SIMD:
-				process_bodies_simd(bodies, processing_info, x_vec, y_vec, m_vec, r_vec, vx_vec, vy_vec);
+				process_bodies_simd(bodies, processing_info, x_vec, y_vec, m_vec, r_vec);
 				break;
 			case CUDA:
 				exit(0);
