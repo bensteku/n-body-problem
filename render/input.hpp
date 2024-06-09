@@ -17,7 +17,7 @@ struct input_settings
 	// modifier key for zoom and dragging
 	bool ctrl_pressed = false;
 	// toggle for showing fps
-	bool f_pressed = false;
+	bool f_pressed = true;
 };
 
 void process_inputs(sf::Window& window, input_settings& is, processing_args& pa);

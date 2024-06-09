@@ -56,7 +56,8 @@ void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShap
 			m_fps_text.setString(m_fps_string + std::to_string(int(frame_time)) + "\n" +
 								m_processing_type + "\n" +
 								m_gravity + std::to_string(pa.g) + "\n" +
-								m_timestep + std::to_string(pa.timestep));
+								m_timestep + std::to_string(pa.timestep) + "\n" +
+								m_bodies + std::to_string(pa.n));
 			m_clock.restart();
 			m_frame_counter = 1;
 		}

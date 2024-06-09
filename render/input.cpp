@@ -68,6 +68,9 @@ void process_inputs(sf::Window& window, input_settings& is, processing_args& pa)
 					else
 						pa.g *= 0.9;
 					break;
+				case sf::Keyboard::Scan::S:
+					pa.g *= -1;
+					break;
 				default:
 					break;
 			}

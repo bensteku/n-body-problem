@@ -3,6 +3,7 @@
 #include <random>
 #include <iostream>
 #include <limits>
+#include <omp.h>
 
 #include "../misc/util.hpp"
 
@@ -11,7 +12,7 @@
 	The y-axis will be cropped according to the aspect ratio.
 */
 
-std::vector<body> init_bodies_uniform(size_t num_bodies, float min_mass, float max_mass)
+void init_bodies_uniform(std::vector<body>& bodies, float min_mass, float max_mass)
 {
 
 	std::random_device dev;
@@ -19,9 +20,6 @@ std::vector<body> init_bodies_uniform(size_t num_bodies, float min_mass, float m
 	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
 	std::uniform_real_distribution<float> x_uniform(-100, 100);
 	std::uniform_real_distribution<float> y_uniform(-100 * settings::aspect_ratio, 100 * settings::aspect_ratio);	
-
-	std::vector<body> bodies;
-	bodies.resize(num_bodies);
 
 	for (body& it : bodies)
 	{
@@ -33,11 +31,9 @@ std::vector<body> init_bodies_uniform(size_t num_bodies, float min_mass, float m
 		it.v_y = 0;
 	}
 
-	return bodies;
-
 }
 
-std::vector<body> init_bodies_circle(size_t num_bodies, float min_mass, float max_mass, float radius, float deviation)
+void init_bodies_circle(std::vector<body>& bodies, float min_mass, float max_mass, float radius, float deviation)
 {
 
 	std::random_device dev;
@@ -45,11 +41,8 @@ std::vector<body> init_bodies_circle(size_t num_bodies, float min_mass, float ma
 	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
 	std::uniform_real_distribution<float> random_radius((1 - deviation) * radius, (1 + deviation) * radius);
 
-	std::vector<body> bodies;
-	bodies.resize(num_bodies);
-
 	float theta = 0;
-	float t_increment = 2 * settings::pi / num_bodies;
+	float t_increment = 2 * settings::pi / bodies.size();
 	for (body& it : bodies)
 	{
 		float r = random_radius(rng);
@@ -62,11 +55,9 @@ std::vector<body> init_bodies_circle(size_t num_bodies, float min_mass, float ma
 		theta += t_increment;
 	}
 
-	return bodies;
-
 }
 
-std::vector<body> init_bodies_normal(size_t num_bodies, float min_mass, float max_mass, float center_x, float center_y, float std_x, float std_y)
+void init_bodies_normal(std::vector<body>& bodies, float min_mass, float max_mass, float center_x, float center_y, float std_x, float std_y)
 {
 
 	std::random_device dev;
@@ -74,9 +65,6 @@ std::vector<body> init_bodies_normal(size_t num_bodies, float min_mass, float ma
 	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
 	std::normal_distribution<float> x_normal(center_x, std_x);
 	std::normal_distribution<float> y_normal(center_y, std_y);
-
-	std::vector<body> bodies;
-	bodies.resize(num_bodies);
 	
 	for (body& it : bodies)
 	{
@@ -87,8 +75,6 @@ std::vector<body> init_bodies_normal(size_t num_bodies, float min_mass, float ma
 		it.v_x = 0;
 		it.v_y = 0;
 	}
-
-	return bodies;
 
 }
 
@@ -138,24 +124,9 @@ void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256*
 
 	// init registers (maybe move this outside so this is only done once)
 	// single and tmp registers for the element the iteration is currently at
-	const __m256 g_reg = _mm256_set_ps(pa.g, pa.g, pa.g, pa.g, pa.g, pa.g, pa.g, pa.g);
-	__m256 m_it_reg;
-	__m256 x_it_reg;
-	__m256 y_it_reg;
-	__m256 vx_it_reg;
-	__m256 vy_it_reg;
-	__m256 r_it_reg;
-	__m256 r_add_it_reg;
-	__m256 dx_reg;
-	__m256 dx_squ_reg;
-	__m256 dy_reg;
-	__m256 dy_squ_reg;
-	__m256 dist_reg;
-	__m256 force_reg;
-	__m256 vel_reg;
+	const __m256 g_reg = _mm256_set_ps(pa.g, pa.g, pa.g, pa.g, pa.g, pa.g, pa.g, pa.g);	
 	const __m256 delta_t_reg = _mm256_set_ps(pa.timestep, pa.timestep, pa.timestep, pa.timestep, pa.timestep, pa.timestep, pa.timestep, pa.timestep);
-	__m256 nan_check_reg;
-	__m256 size_check_reg;
+	
 
 	// load current values into the register arrays
 	for (size_t i = 0; i < num_packed_elements; i++)
@@ -166,18 +137,31 @@ void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256*
 		m_vec[i] = _mm256_set_ps(bodies[indices[7]].m, bodies[indices[6]].m, bodies[indices[5]].m, bodies[indices[4]].m, bodies[indices[3]].m, bodies[indices[2]].m, bodies[indices[1]].m, bodies[indices[0]].m);
 		r_vec[i] = _mm256_set_ps(bodies[indices[7]].r, bodies[indices[6]].r, bodies[indices[5]].r, bodies[indices[4]].r, bodies[indices[3]].r, bodies[indices[2]].r, bodies[indices[1]].r, bodies[indices[0]].r);
 	}
-
-	// iterate over every single body and perform SIMD operations with it and the entire rest of the bodies vector
-	for (body& it : bodies)
+//#pragma omp parallel for  // significantly reduces performance atm
+	for (int j = 0; j < num_elements; j++)
 	{
+		__m256 nan_check_reg;
+		__m256 size_check_reg;
+		__m256 m_it_reg;
+		__m256 x_it_reg;
+		__m256 y_it_reg;
+		__m256 r_it_reg;
+		__m256 r_add_it_reg;
+		__m256 dx_reg;
+		__m256 dx_squ_reg;
+		__m256 dy_reg;
+		__m256 dy_squ_reg;
+		__m256 dist_reg;
+		__m256 force_reg;
+		__m256 vel_reg;
 		// load the current body's values into the tmp registers
-		m_it_reg = _mm256_set_ps(it.m, it.m, it.m, it.m, it.m, it.m, it.m, it.m);
-		x_it_reg = _mm256_set_ps(it.x, it.x, it.x, it.x, it.x, it.x, it.x, it.x);
-		y_it_reg = _mm256_set_ps(it.y, it.y, it.y, it.y, it.y, it.y, it.y, it.y);
-		r_it_reg = _mm256_set_ps(it.r, it.r, it.r, it.r, it.r, it.r, it.r, it.r);
+		m_it_reg = _mm256_set_ps(bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m);
+		x_it_reg = _mm256_set_ps(bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x);
+		y_it_reg = _mm256_set_ps(bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y);
+		r_it_reg = _mm256_set_ps(bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r);
 
 		// run the formulas for 8 bodies at a time
-		for (size_t i = 0; i < num_packed_elements; i++)
+		for (int i = 0; i < num_packed_elements; i++)
 		{
 			// set up mask for nulling out duplicate bodies at the end of the array (only happens if the amount of bodies is not divisible by 8)
 			// I suppose this is not the smartest way of doing this, but I can't be bothered to look up how to it better
@@ -194,7 +178,7 @@ void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256*
 			{
 				size_check_reg = _mm256_set1_ps(1.0);
 			}
-			
+
 			// distances
 			dx_reg = _mm256_sub_ps(x_it_reg, x_vec[i]);
 			dx_squ_reg = _mm256_mul_ps(dx_reg, dx_reg);
@@ -236,12 +220,12 @@ void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256*
 			vel_reg = _mm256_mul_ps(force_reg, dx_reg);
 			vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
 			dx_reg = _mm256_div_ps(vel_reg, m_it_reg);  // overwriting the dx_reg, as vel_reg already contains the results we need it for
-			it.v_x -= reduce_register(dx_reg);
+			bodies[j].v_x -= reduce_register(dx_reg);
 			// y, for the iterator body
 			vel_reg = _mm256_mul_ps(force_reg, dy_reg);
 			vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
 			dy_reg = _mm256_div_ps(vel_reg, m_it_reg);  // same as above
-			it.v_y -= reduce_register(dy_reg);
+			bodies[j].v_y -= reduce_register(dy_reg);
 		}
 	}
 
@@ -256,10 +240,10 @@ void process_bodies_simd(std::vector<body>& bodies, processing_args& pa, __m256*
 
 void process_bodies(std::vector<body>& bodies, processing_args& pa)
 {
-
-	for (auto it = bodies.begin(); it != bodies.end() - 1; ++it)
+	
+	for (auto it = bodies.begin(); it != bodies.end() - 1; it++)
 	{
-		for (auto it2 = it + 1; it2 != bodies.end(); ++it2)
+		for (auto it2 = it + 1; it2 != bodies.end(); it2++)
 		{
 			calc_force(*it, *it2, pa);
 		}

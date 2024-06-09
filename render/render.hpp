@@ -19,6 +19,7 @@ class Renderer
 		std::string m_processing_type = "SISD";
 		std::string m_gravity = "Gravity: ";
 		std::string m_timestep = "Timestep: ";
+		std::string m_bodies = "Number of bodies: ";
 
 		int m_frame_counter = 1;
 	public:

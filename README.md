@@ -15,6 +15,7 @@ On my system, SIMD processing runs about 1.6 times faster than the SISD approach
 - pressing R resets zoom to default and focuses the camera on 0,0
 - pressing F toggles the display of the FPS counter, the processing type, gravity and the timestep
 - pressing Numpad+/- (+ L-CTRL) increases/decreases gravity (the timestep)
+- pressing S flips gravity around
 
 ## Acknowledgements
 

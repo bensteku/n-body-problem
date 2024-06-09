@@ -27,9 +27,11 @@ int main(int argc, char* argv[])
 	Renderer renderer;
 
 	// bodies will be created in world space from -100 to 100 initially
-	//std::vector<body> bodies = init_bodies_uniform(settings::n_bodies, 2000, 2000);
-	std::vector<body> bodies = init_bodies_circle(settings::n_bodies, 2000, 2000, 50);
-	//std::vector<body> bodies = init_bodies_normal(settings::n_bodies, 2000, 2000);
+	std::vector<body> bodies;
+	bodies.resize(settings::n_bodies);
+	//init_bodies_uniform(bodies, 2000, 2000);
+	init_bodies_circle(bodies, 2000, 2000, 50);
+	//init_bodies_normal(bodies, 2000, 2000);
 	
 	// SFML shapes
 	std::vector<sf::CircleShape> shapes = init_shapes(bodies);
@@ -41,7 +43,7 @@ int main(int argc, char* argv[])
 
 	// struct that will contain values for the physical calculations
 	// modifiable by user input, uses values from settings as default
-	processing_args processing_info{ settings::timestep, settings::g };
+	processing_args processing_info{ settings::timestep, settings::g, settings::n_bodies };
 
 	// in case we're running SIMD processing, we allocate a bunch of registers beforehand
 	__m256* x_vec;
