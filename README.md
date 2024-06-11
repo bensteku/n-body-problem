@@ -9,6 +9,7 @@ On my system, SIMD processing runs about 1.6 times faster than the SISD approach
 
 ## Controls
 
+The setup provides onscreen instructions (only option 1 is implement so far). During simulation:
 - mouse wheel zooms in and out
 - clicking and dragging moves the camera view around
 - pressing and holding L-CTRL makes zooming and dragging faster

@@ -1,4 +1,5 @@
 #include "render.hpp"
+#include <ranges>
 
 #include "../misc/settings.hpp"
 
@@ -19,45 +20,61 @@ std::vector<sf::CircleShape> init_shapes(const std::vector<body>& bodies)
 	return shapes;
 }
 
-Renderer::Renderer(const std::string file_path)
+// base Scene class
+
+Scene::Scene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref) :
+	m_window_ref(window_ref), m_bodies_ref(bodies_ref), m_shapes_ref(shapes_ref), m_is_ref(is_ref), m_ss_ref(ss_ref)
 {
-	if (!m_font.loadFromFile(file_path))
+
+	if (!m_font.loadFromFile("./data/fonts/routed-gothic.ttf"))
 		exit(-1);
-	m_fps_text.setFont(m_font);
-	m_fps_text.setCharacterSize(12);
-	m_fps_text.setFillColor(sf::Color::Yellow);
+	m_upper_left_text.setFont(m_font);
+	m_upper_left_text.setCharacterSize(12);
+	m_upper_left_text.setFillColor(sf::Color::Yellow);
 	m_clock.restart();
+
 }
 
-void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShape>& shapes, input_settings& is, processing_args& pa)
+void Scene::update_shapes()
 {
-	for (const sf::CircleShape& it : shapes)
+	
+	const std::vector<body>& const_bodies_ref = const_cast<const std::vector<body>&>(m_bodies_ref);
+	for (size_t i = 0; i < m_bodies_ref.size(); i++)
 	{
-		window.draw(it);
+		m_shapes_ref[i].setRadius(const_bodies_ref[i].m / (settings::mass_radius_factor * m_is_ref.zoom));
+		const float x_pos = settings::window_width_h + settings::window_width_h * (const_bodies_ref[i].x + m_is_ref.center_x) / (100 * m_is_ref.zoom);
+		const float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * (const_bodies_ref[i].y + m_is_ref.center_y) / (100 * m_is_ref.zoom);
+		m_shapes_ref[i].setPosition(x_pos, y_pos);
+		m_window_ref.draw(m_shapes_ref[i]);
 	}
-	if (is.f_pressed)
+
+}
+
+void Scene::render_fps_info()
+{
+	if (m_is_ref.f_toggle)
 	{
 		switch (settings::pt)
 		{
-			case SISD:
-				m_processing_type = "SISD";
-				break;
-			case SIMD:
-				m_processing_type = "SIMD";
-				break;
-			case CUDA:
-				m_processing_type = "CUDA";
-				break;
+		case SISD:
+			m_processing_type = "SISD";
+			break;
+		case SIMD:
+			m_processing_type = "SIMD";
+			break;
+		case CUDA:
+			m_processing_type = "CUDA";
+			break;
 		}
 		if (m_frame_counter % settings::fps_smoother == 0)
 		{
 			float frame_time = m_clock.getElapsedTime().asSeconds();
 			frame_time = (float)m_frame_counter / frame_time;
-			m_fps_text.setString(m_fps_string + std::to_string(int(frame_time)) + "\n" +
-								m_processing_type + "\n" +
-								m_gravity + std::to_string(pa.g) + "\n" +
-								m_timestep + std::to_string(pa.timestep) + "\n" +
-								m_bodies + std::to_string(pa.n));
+			m_upper_left_text.setString(m_fps_str + std::to_string(int(frame_time)) + "\n" +
+				m_processing_type + "\n" +
+				m_gravity_str + std::to_string(m_ss_ref.g) + "\n" +
+				m_timestep_str + std::to_string(m_ss_ref.timestep) + "\n" +
+				m_bodies_str + std::to_string(m_ss_ref.n));
 			m_clock.restart();
 			m_frame_counter = 1;
 		}
@@ -65,17 +82,128 @@ void Renderer::render(sf::RenderWindow& window, const std::vector<sf::CircleShap
 		{
 			m_frame_counter += 1;
 		}
-		window.draw(m_fps_text);
+		m_window_ref.draw(m_upper_left_text);
 	}
 }
 
-void Renderer::update_shapes(sf::RenderWindow& window, std::vector<sf::CircleShape>& shapes, const std::vector<body>& bodies, float x_offset, float y_offset, float zoom)
+// Scene class for the init screen
+
+SetupScene::SetupScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref)
 {
-	for (size_t i = 0; i < bodies.size(); i++)
+
+	m_setup_text.setFont(m_font);
+	m_setup_text.setCharacterSize(14);
+	m_setup_text.setFillColor(sf::Color::Cyan);
+	m_setup_text.setString(m_settings_str);
+	m_setup_text.setOrigin(m_setup_text.getGlobalBounds().getSize() / 2.f + m_setup_text.getLocalBounds().getPosition());
+	m_setup_text.setPosition(settings::window_width_h, settings::window_height_h);
+
+}
+
+void SetupScene::process_inputs()
+{
+	
+	process_inputs_setup(m_window_ref, m_is_ref, m_ss_ref);
+
+}
+
+void SetupScene::render()
+{
+
+	m_window_ref.draw(m_setup_text);
+
+}
+
+// Scene class for the init screen with a circle
+
+SetupSceneCircle::SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+{
+
+	m_setup_circle_text.setFont(m_font);
+	m_setup_circle_text.setCharacterSize(14);
+	m_setup_circle_text.setFillColor(sf::Color::Cyan);
+	m_setup_circle_text.setString(m_settings_circle_str);
+	m_setup_circle_text.setOrigin(m_setup_circle_text.getGlobalBounds().getSize() / 2.f + m_setup_circle_text.getLocalBounds().getPosition());
+	m_setup_circle_text.setPosition(settings::window_width_h, 55);
+
+	m_previous_size = bodies_ref.size();
+
+}
+
+void SetupSceneCircle::process_inputs()
+{
+	process_inputs_setup_circle(m_window_ref, m_is_ref, m_ss_ref);
+}
+
+void SetupSceneCircle::render()
+{
+	
+	// if the desired amount of bodies changed, resize all relevant vectors
+	if (m_previous_size != m_ss_ref.n)
 	{
-		shapes[i].setRadius(bodies[i].m / (settings::mass_radius_factor * zoom));
-		float x_pos = settings::window_width_h + settings::window_width_h * (bodies[i].x + x_offset) / (100 * zoom);
-		float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * (bodies[i].y + y_offset) / (100 * zoom);
-		shapes[i].setPosition(x_pos, y_pos);
+		m_previous_size = m_ss_ref.n;
+		m_bodies_ref.resize(m_ss_ref.n);
+		m_shapes_ref.resize(m_ss_ref.n);
+		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		for (auto& it : m_registers_ref)
+			it.resize(num_packed_elements);
 	}
+	// set up bodies in the circle as determined by user inputs
+	init_bodies_circle(m_bodies_ref, m_ss_ref.min_mass, m_ss_ref.max_mass, m_ss_ref.circle_radius, m_ss_ref.circle_deviation);
+	
+	update_shapes();
+
+	m_window_ref.draw(m_setup_circle_text);
+	render_fps_info();
+
+}
+
+// Scene class for the actual simulation
+
+SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+{
+	
+	// if we run in SIMD, we need to resize the vectors of registers to the correct size
+	if (settings::pt == SIMD)
+	{
+		const size_t num_elements = m_bodies_ref.size();
+		const size_t num_packed_elements = 1 + num_elements / 8;
+		for (auto& it : m_registers_ref)
+		{
+			it.resize(num_packed_elements);
+		}
+	}
+
+}
+
+void SimScene::process_inputs()
+{
+
+	process_inputs_sim(m_window_ref, m_is_ref, m_ss_ref);
+
+}
+
+void SimScene::render()
+{
+
+	// run the physics simulation
+	switch (settings::pt)
+	{
+		case SISD:
+			process_bodies(m_bodies_ref, m_ss_ref);
+			break;
+		case SIMD:
+			process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers_ref[0], m_registers_ref[1], m_registers_ref[2], m_registers_ref[3]);
+			break;
+		case CUDA:
+			exit(0);
+	}
+	// update the shapes afterwards
+	update_shapes();
+	// optionally display FPS counter
+	render_fps_info();
+
 }

@@ -2,9 +2,11 @@
 
 enum processing_type
 {
+
 	SISD,
 	SIMD,
 	CUDA
+
 };
 
 namespace settings
@@ -26,7 +28,7 @@ namespace settings
 	static constexpr float timestep = 0.005;
 	//static constexpr float g = 6.6743e-11;
 	static constexpr float g = 6.6743e-3;
-	static constexpr processing_type pt = SISD;
+	static constexpr processing_type pt = SIMD;
 
 	// drawing settings
 	static constexpr float mass_radius_factor = 200;
