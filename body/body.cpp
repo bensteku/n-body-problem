@@ -12,14 +12,14 @@
 	The y-axis will be cropped according to the aspect ratio.
 */
 
-void init_bodies_uniform(std::vector<body>& bodies, float min_mass, float max_mass)
+void init_bodies_uniform(std::vector<body>& bodies, float min_mass, float max_mass, float x_range, float y_range)
 {
 
 	std::random_device dev;
 	std::mt19937 rng(dev());
 	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
-	std::uniform_real_distribution<float> x_uniform(-100, 100);
-	std::uniform_real_distribution<float> y_uniform(-100 * settings::aspect_ratio, 100 * settings::aspect_ratio);	
+	std::uniform_real_distribution<float> x_uniform(-x_range, x_range);
+	std::uniform_real_distribution<float> y_uniform(-y_range * settings::aspect_ratio, y_range * settings::aspect_ratio);	
 
 	for (body& it : bodies)
 	{
@@ -131,6 +131,7 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 	// load current values into the register arrays
 	for (size_t i = 0; i < num_packed_elements; i++)
 	{
+		// array of indices to ensure that we don't access invalid indices in case the bodies array's size is not divisible by 8
 		const size_t indices[8] = { std::min(i * 8, num_elements - 1), std::min(i * 8 + 1, num_elements - 1), std::min(i * 8 + 2, num_elements - 1), std::min(i * 8 + 3, num_elements - 1), std::min(i * 8 + 4, num_elements - 1), std::min(i * 8 + 5, num_elements - 1), std::min(i * 8 + 6, num_elements - 1), std::min(i * 8 + 7, num_elements - 1) };
 		x_vec[i] = _mm256_set_ps(bodies[indices[7]].x, bodies[indices[6]].x, bodies[indices[5]].x, bodies[indices[4]].x, bodies[indices[3]].x, bodies[indices[2]].x, bodies[indices[1]].x, bodies[indices[0]].x);
 		y_vec[i] = _mm256_set_ps(bodies[indices[7]].y, bodies[indices[6]].y, bodies[indices[5]].y, bodies[indices[4]].y, bodies[indices[3]].y, bodies[indices[2]].y, bodies[indices[1]].y, bodies[indices[0]].y);
@@ -164,7 +165,7 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 		for (int i = 0; i < num_packed_elements; i++)
 		{
 			// set up mask for nulling out duplicate bodies at the end of the array (only happens if the amount of bodies is not divisible by 8)
-			// I suppose this is not the smartest way of doing this, but I can't be bothered to look up how to it better
+			// I suppose this is not the smartest way of doing this, but I can't be bothered to look up how to do it better
 			if (num_elements_over != 0 and i == num_packed_elements - 1)
 			{
 				float tmp[8] = { 0.0 };
@@ -206,11 +207,10 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 			force_reg = _mm256_mul_ps(force_reg, size_check_reg);
 
 			// get the inverse square root of the distance
-			//__m256 zero_mask = _mm256_cmp_ps(_mm256_set1_ps(0.0), dist_reg, _CMP_EQ_OQ);
-			//zero_mask = _mm256_and_ps(_mm256_set1_ps(1.0), zero_mask);
-			//dist_reg = _mm256_add_ps(dist_reg, zero_mask);
 			dist_reg = _mm256_invsqrt_ps(dist_reg);
-			dist_reg = _mm256_and_ps(dist_reg, _mm256_xor_ps(is_infinity(dist_reg), _mm256_castsi256_ps(_mm256_set1_epi64x(-1))));
+			// the inverse square root puts out nans/infs for 0, so we have to deal with that
+			//dist_reg = _mm256_and_ps(dist_reg, _mm256_xor_ps(is_infinity(dist_reg), _mm256_castsi256_ps(_mm256_set1_epi64x(-1))));
+			dist_reg = _mm256_and_ps(dist_reg, nan_check_reg);  // should achieve the same purpose as the line above
 			// normalize the x and y components with it
 			dx_reg = _mm256_mul_ps(dx_reg, dist_reg);
 			dy_reg = _mm256_mul_ps(dy_reg, dist_reg);
@@ -229,7 +229,7 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 		}
 	}
 
-	// TODO
+	// the compiler vectorizes this on its own, looking at the assembly
 	for (body& it : bodies)
 	{
 		it.x += 0.5 * it.v_x * ss.timestep;

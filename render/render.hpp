@@ -49,7 +49,7 @@ class SetupScene : public Scene
 		sf::Text m_setup_text;
 
 		static inline const std::string m_settings_str = \
-			"Press 1 to initialize bodies in a circle.\nPress 2 to initialize bodies uniformly random.\nPress 3 to initialize bodies in a random normal distribution.";
+			"Press 1 to initialize bodies in a circle.\nPress 2 to initialize bodies uniformly random.\nPress 3 to initialize bodies in a random normal distribution.\nPress 4 to place bodies yourself.";
 	public:
 		SetupScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 
@@ -66,12 +66,72 @@ class SetupSceneCircle : public Scene
 
 		sf::Text m_setup_circle_text;
 
-		static inline const std::string m_settings_circle_str = \
-			"Click and hold to determine radius.\nHold m + scroll mouse wheel to change max mass, n + scroll for min mass.\nHold b + scroll mouse wheel to change number of bodies.\nHold d + scroll mouse wheel to change random deviation from circle.\nPress Enter to start simulation.";
+		const std::string m_settings_circle_str = \
+			"Click and hold to determine radius.\nHold d + scroll mouse wheel to change random deviation from circle.\nHold m + scroll mouse wheel to change max mass, n + scroll for min mass.\nHold b + scroll mouse wheel to change number of bodies.\nPress Enter to start simulation.";
 		// buffer when the user changes the amount of bodies
 		size_t m_previous_size = 0;
 	public:
 		SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+
+		void process_inputs();
+		void render();
+
+};
+
+class SetupSceneUniform : public Scene
+{
+
+	private:
+		std::array<std::vector<__m256>, 4>& m_registers_ref;
+
+		sf::Text m_setup_uniform_text;
+
+		 const std::string m_settings_uniform_str = \
+			"Hold d/c + scroll mouse wheel to change x/y range.\nHold m + scroll mouse wheel to change max mass, n + scroll for min mass.\nHold b + scroll mouse wheel to change number of bodies.\nPress Enter to start simulation.";
+		 // buffer when the user changes the amount of bodies
+		 size_t m_previous_size = 0;
+	public:
+		SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+
+		void process_inputs();
+		void render();
+
+};
+
+class SetupSceneNormal : public Scene
+{
+
+	private:
+		std::array<std::vector<__m256>, 4>& m_registers_ref;
+
+		sf::Text m_setup_normal_text;
+
+		const std::string m_settings_normal_str = \
+			"Hold d/c + scroll mouse wheel to change x/y std.\nHold m + scroll mouse wheel to change max mass, n + scroll for min mass.\nHold b + scroll mouse wheel to change number of bodies.\nPress Enter to start simulation.";
+		// buffer when the user changes the amount of bodies
+		size_t m_previous_size = 0;
+	public:
+		SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+
+		void process_inputs();
+		void render();
+
+};
+
+class SetupSceneCustom : public Scene
+{
+
+	private:
+		std::array<std::vector<__m256>, 4>& m_registers_ref;
+
+		sf::Text m_setup_custom_text;
+
+		const std::string m_settings_custom_str = \
+			"Click to add a body.\nHolding the click and scrolling allows to determine the body's mass.\nPress R to delete all bodies placed so far.\nPress Enter to start simulation.";
+		// buffer when the user changes the amount of bodies
+		size_t m_previous_size = 0;
+	public:
+		SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
 
 		void process_inputs();
 		void render();

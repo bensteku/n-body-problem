@@ -41,10 +41,12 @@ void Scene::update_shapes()
 	const std::vector<body>& const_bodies_ref = const_cast<const std::vector<body>&>(m_bodies_ref);
 	for (size_t i = 0; i < m_bodies_ref.size(); i++)
 	{
-		m_shapes_ref[i].setRadius(const_bodies_ref[i].m / (settings::mass_radius_factor * m_is_ref.zoom));
 		const float x_pos = settings::window_width_h + settings::window_width_h * (const_bodies_ref[i].x + m_is_ref.center_x) / (100 * m_is_ref.zoom);
 		const float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * (const_bodies_ref[i].y + m_is_ref.center_y) / (100 * m_is_ref.zoom);
 		m_shapes_ref[i].setPosition(x_pos, y_pos);
+		const float radius = const_bodies_ref[i].m / (settings::mass_radius_factor * m_is_ref.zoom);
+		m_shapes_ref[i].setOrigin(radius, radius);
+		m_shapes_ref[i].setRadius(radius);
 		m_window_ref.draw(m_shapes_ref[i]);
 	}
 
@@ -56,15 +58,15 @@ void Scene::render_fps_info()
 	{
 		switch (settings::pt)
 		{
-		case SISD:
-			m_processing_type = "SISD";
-			break;
-		case SIMD:
-			m_processing_type = "SIMD";
-			break;
-		case CUDA:
-			m_processing_type = "CUDA";
-			break;
+			case SISD:
+				m_processing_type = "SISD";
+				break;
+			case SIMD:
+				m_processing_type = "SIMD";
+				break;
+			case CUDA:
+				m_processing_type = "CUDA";
+				break;
 		}
 		if (m_frame_counter % settings::fps_smoother == 0)
 		{
@@ -104,7 +106,7 @@ SetupScene::SetupScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_r
 void SetupScene::process_inputs()
 {
 	
-	process_inputs_setup(m_window_ref, m_is_ref, m_ss_ref);
+	process_inputs_setup(m_window_ref, m_bodies_ref, m_shapes_ref, m_is_ref, m_ss_ref);
 
 }
 
@@ -134,7 +136,9 @@ SetupSceneCircle::SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<bod
 
 void SetupSceneCircle::process_inputs()
 {
+
 	process_inputs_setup_circle(m_window_ref, m_is_ref, m_ss_ref);
+
 }
 
 void SetupSceneCircle::render()
@@ -156,6 +160,146 @@ void SetupSceneCircle::render()
 	update_shapes();
 
 	m_window_ref.draw(m_setup_circle_text);
+	render_fps_info();
+
+}
+
+// Scene class for uniform random initialization
+
+SetupSceneUniform::SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+{
+
+	m_setup_uniform_text.setFont(m_font);
+	m_setup_uniform_text.setCharacterSize(14);
+	m_setup_uniform_text.setFillColor(sf::Color::Cyan);
+	m_setup_uniform_text.setString(m_settings_uniform_str);
+	m_setup_uniform_text.setOrigin(m_setup_uniform_text.getGlobalBounds().getSize() / 2.f + m_setup_uniform_text.getLocalBounds().getPosition());
+	m_setup_uniform_text.setPosition(settings::window_width_h, 55);
+
+	m_previous_size = bodies_ref.size();
+
+}
+
+void SetupSceneUniform::process_inputs()
+{
+
+	process_inputs_setup_uniform(m_window_ref, m_is_ref, m_ss_ref);
+
+}
+
+void SetupSceneUniform::render()
+{
+
+	// if the desired amount of bodies changed, resize all relevant vectors
+	if (m_previous_size != m_ss_ref.n)
+	{
+		m_previous_size = m_ss_ref.n;
+		m_bodies_ref.resize(m_ss_ref.n);
+		m_shapes_ref.resize(m_ss_ref.n);
+		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		for (auto& it : m_registers_ref)
+			it.resize(num_packed_elements);
+	}
+	// set up bodies uniformly random
+	init_bodies_uniform(m_bodies_ref, m_ss_ref.min_mass, m_ss_ref.max_mass, m_ss_ref.x_range, m_ss_ref.y_range);
+
+	update_shapes();
+
+	m_window_ref.draw(m_setup_uniform_text);
+	render_fps_info();
+
+}
+
+// Scene class for the normal distributed intialization
+
+SetupSceneNormal::SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+{
+
+	m_setup_normal_text.setFont(m_font);
+	m_setup_normal_text.setCharacterSize(14);
+	m_setup_normal_text.setFillColor(sf::Color::Cyan);
+	m_setup_normal_text.setString(m_settings_normal_str);
+	m_setup_normal_text.setOrigin(m_setup_normal_text.getGlobalBounds().getSize() / 2.f + m_setup_normal_text.getLocalBounds().getPosition());
+	m_setup_normal_text.setPosition(settings::window_width_h, 55);
+
+	m_previous_size = bodies_ref.size();
+
+}
+
+void SetupSceneNormal::process_inputs()
+{
+
+	// works for just as well for normal distribution
+	process_inputs_setup_uniform(m_window_ref, m_is_ref, m_ss_ref);
+
+}
+
+void SetupSceneNormal::render()
+{
+
+	// if the desired amount of bodies changed, resize all relevant vectors
+	if (m_previous_size != m_ss_ref.n)
+	{
+		m_previous_size = m_ss_ref.n;
+		m_bodies_ref.resize(m_ss_ref.n);
+		m_shapes_ref.resize(m_ss_ref.n);
+		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		for (auto& it : m_registers_ref)
+			it.resize(num_packed_elements);
+	}
+	// set up bodies uniformly random
+	init_bodies_normal(m_bodies_ref, m_ss_ref.min_mass, m_ss_ref.max_mass, 0, 0, m_ss_ref.x_range, m_ss_ref.y_range);
+
+	update_shapes();
+
+	m_window_ref.draw(m_setup_normal_text);
+	render_fps_info();
+
+}
+
+// Scene class for custom initialization
+
+SetupSceneCustom::SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+{
+
+	m_setup_custom_text.setFont(m_font);
+	m_setup_custom_text.setCharacterSize(14);
+	m_setup_custom_text.setFillColor(sf::Color::Cyan);
+	m_setup_custom_text.setString(m_settings_custom_str);
+	m_setup_custom_text.setOrigin(m_setup_custom_text.getGlobalBounds().getSize() / 2.f + m_setup_custom_text.getLocalBounds().getPosition());
+	m_setup_custom_text.setPosition(settings::window_width_h, 55);
+
+	m_previous_size = bodies_ref.size();
+
+}
+
+void SetupSceneCustom::process_inputs()
+{
+
+	process_inputs_setup_custom(m_window_ref, m_bodies_ref, m_shapes_ref, m_is_ref, m_ss_ref);
+
+}
+
+void SetupSceneCustom::render()
+{
+
+	// if the desired amount of bodies changed, resize all relevant vectors
+	if (m_previous_size != m_ss_ref.n)
+	{
+		m_previous_size = m_ss_ref.n;
+		m_bodies_ref.resize(m_ss_ref.n);
+		m_shapes_ref.resize(m_ss_ref.n);
+		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		for (auto& it : m_registers_ref)
+			it.resize(num_packed_elements);
+	}
+
+	update_shapes();
+
+	m_window_ref.draw(m_setup_custom_text);
 	render_fps_info();
 
 }

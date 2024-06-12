@@ -8,7 +8,7 @@ Using SIMD and 800 bodies, the simulation runs at ~700 FPS on my system.
 
 ## Controls
 
-The setup provides onscreen instructions (only option 1 is implemented so far). During simulation:
+The setup provides onscreen instructions. During simulation:
 - mouse wheel zooms in and out
 - clicking and dragging moves the camera view around
 - pressing and holding L-CTRL makes zooming and dragging faster
@@ -16,6 +16,7 @@ The setup provides onscreen instructions (only option 1 is implemented so far). 
 - pressing F toggles the display of the FPS counter, the processing type, gravity and the timestep
 - pressing Numpad+/- (+ L-CTRL) increases/decreases gravity (the timestep)
 - pressing S flips gravity around
+- pressing T sends you back to the setup menu
 
 ## Acknowledgements
 

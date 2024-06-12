@@ -29,14 +29,15 @@ struct sim_settings
 	// init settings
 	float circle_radius = 25;
 	float circle_deviation = 0.0;
-	float std_x = 25;
-	float std_y = 25;
+	float x_range = 25;
+	float y_range = 25;
 	float max_mass = 2000;
 	float min_mass = 2000;
+
 };
 
 // initialization methods
-void init_bodies_uniform(std::vector<body>& bodies, float min_mass, float max_mass);
+void init_bodies_uniform(std::vector<body>& bodies, float min_mass, float max_mass, float x_range, float y_range);
 void init_bodies_circle(std::vector<body>& bodies, float min_mass, float max_mass, float radius = 50, float deviation = 0);
 void init_bodies_normal(std::vector<body>& bodies, float min_mass, float max_mass, float center_x = 0, float center_y = 0, float std_x = 25, float std_y = 25);
 
