@@ -18,7 +18,15 @@ class Scene
 		static inline const std::string m_gravity_str = "Gravity: ";
 		static inline const std::string m_timestep_str = "Timestep: ";
 		static inline const std::string m_bodies_str = "Number of bodies: ";
-		static inline std::string m_processing_type;
+		static inline const std::string m_processing_type =
+		#if defined(USE_CUDA)
+		"CUDA"
+		#elif defined(USE_SIMD)
+		"SIMD"
+		#else
+		"SISD"
+		#endif
+		;
 
 		int m_frame_counter = 1;
 	protected:
@@ -145,6 +153,27 @@ class SimScene : public Scene
 		// registers for the SIMD case
 		// 0:x, 1:y, 2:mass, 3:radius
 		std::array<std::vector<__m256>, 4>& m_registers_ref;
+
+		// if CUDA is used, we create several pointers for memory on the GPU
+#		ifdef USE_CUDA
+		float* m_d_x;
+		float* m_d_y;
+		float* m_d_mass;
+		float* m_d_radius;
+		float* m_d_v_x;
+		float* m_d_v_y;
+		// ... and because the data is laid out in terms of body structs
+		// (as opposed to in terms arrays of the struct's members)
+		// we need floats to hold the same data on the cpu as well
+		std::vector<float> m_h_x;
+		std::vector<float> m_h_y;
+		std::vector<float> m_h_mass;
+		std::vector<float> m_h_radius;
+		std::vector<float> m_h_v_x;
+		std::vector<float> m_h_v_y;
+		// memory to keep track of size of last allocation
+		size_t m_last_allocation = 0;
+#		endif
 	public:
 		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
 

@@ -47,6 +47,7 @@
     <ClInclude Include="render\input.hpp">
       <Filter>Headerdateien</Filter>
     </ClInclude>
+    <ClInclude Include="body\body.cuh" />
   </ItemGroup>
   <ItemGroup>
     <Font Include="data\fonts\routed-gothic.ttf" />
@@ -58,5 +59,8 @@
     <Image Include="output.gif">
       <Filter>Ressourcendateien</Filter>
     </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="body\body.cu" />
   </ItemGroup>
 </Project>

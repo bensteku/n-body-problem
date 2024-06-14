@@ -7,7 +7,7 @@
 #include <array>
 #include "immintrin.h"
 
-std::array<std::vector<__m256>, 4> set_up_simd_registers();
+std::array<std::vector<__m256>, 4> set_up_simd_registers(size_t num_elements);
 
 constexpr float rsqrt(float number) noexcept
 {

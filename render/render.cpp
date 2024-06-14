@@ -1,4 +1,8 @@
 #include "render.hpp"
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#include "../body/body.cuh"
+#endif
 #include <ranges>
 
 #include "../misc/settings.hpp"
@@ -56,18 +60,6 @@ void Scene::render_fps_info()
 {
 	if (m_is_ref.f_toggle)
 	{
-		switch (settings::pt)
-		{
-			case SISD:
-				m_processing_type = "SISD";
-				break;
-			case SIMD:
-				m_processing_type = "SIMD";
-				break;
-			case CUDA:
-				m_processing_type = "CUDA";
-				break;
-		}
 		if (m_frame_counter % settings::fps_smoother == 0)
 		{
 			float frame_time = m_clock.getElapsedTime().asSeconds();
@@ -309,17 +301,24 @@ void SetupSceneCustom::render()
 SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
 	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
 {
-	
-	// if we run in SIMD, we need to resize the vectors of registers to the correct size
-	if (settings::pt == SIMD)
-	{
-		const size_t num_elements = m_bodies_ref.size();
-		const size_t num_packed_elements = 1 + num_elements / 8;
-		for (auto& it : m_registers_ref)
-		{
-			it.resize(num_packed_elements);
-		}
-	}
+
+#	ifdef USE_CUDA
+	// if CUDA is enabled, we allocate memory for our pointers on the GPU
+	m_last_allocation = m_bodies_ref.size();
+	const size_t bytes = sizeof(float) * m_last_allocation;
+	cudaMalloc(&m_d_x, bytes);
+	cudaMalloc(&m_d_y, bytes);
+	cudaMalloc(&m_d_mass, bytes);
+	cudaMalloc(&m_d_radius, bytes);
+	cudaMalloc(&m_d_v_x, bytes);
+	cudaMalloc(&m_d_v_y, bytes);
+	m_h_x.resize(m_last_allocation);
+	m_h_y.resize(m_last_allocation);
+	m_h_mass.resize(m_last_allocation);
+	m_h_radius.resize(m_last_allocation);
+	m_h_v_x.resize(m_last_allocation);
+	m_h_v_y.resize(m_last_allocation);
+#	endif
 
 }
 
@@ -333,18 +332,53 @@ void SimScene::process_inputs()
 void SimScene::render()
 {
 
-	// run the physics simulation
-	switch (settings::pt)
+#	ifdef USE_CUDA
+	// if CUDA is enabled and the user changed the number of bodies,
+	// we have to reallocate memory for our GPU pointers
+	if (m_bodies_ref.size() != m_last_allocation)
 	{
-		case SISD:
-			process_bodies(m_bodies_ref, m_ss_ref);
-			break;
-		case SIMD:
-			process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers_ref[0], m_registers_ref[1], m_registers_ref[2], m_registers_ref[3]);
-			break;
-		case CUDA:
-			exit(0);
+		cudaFree(m_d_x);
+		cudaFree(m_d_y);
+		cudaFree(m_d_mass);
+		cudaFree(m_d_radius);
+		cudaFree(m_d_v_x);
+		cudaFree(m_d_v_y);
+		m_last_allocation = m_bodies_ref.size();
+		const size_t bytes = sizeof(float) * m_last_allocation;
+		cudaMalloc(&m_d_x, bytes);
+		cudaMalloc(&m_d_y, bytes);
+		cudaMalloc(&m_d_mass, bytes);
+		cudaMalloc(&m_d_radius, bytes);
+		cudaMalloc(&m_d_v_x, bytes);
+		cudaMalloc(&m_d_v_y, bytes);
+		// the same for our CPU-side holding space
+		m_h_x.resize(m_last_allocation);
+		m_h_y.resize(m_last_allocation);
+		m_h_mass.resize(m_last_allocation);
+		m_h_radius.resize(m_last_allocation);
+		m_h_v_x.resize(m_last_allocation);
+		m_h_v_y.resize(m_last_allocation);
 	}
+
+	process_bodies_cuda(m_bodies_ref,
+						m_h_x,
+						m_h_y,
+						m_h_mass,
+						m_h_radius,
+						m_h_v_x,
+						m_h_v_y,
+						m_d_x,
+						m_d_y,
+						m_d_mass,
+						m_d_radius,
+						m_d_v_x,
+						m_d_v_y,
+						m_ss_ref);
+#	elif defined(USE_SIMD)
+	process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers_ref[0], m_registers_ref[1], m_registers_ref[2], m_registers_ref[3]);
+#	else
+	process_bodies(m_bodies_ref, m_ss_ref);
+#	endif
 	// update the shapes afterwards
 	update_shapes();
 	// optionally display FPS counter

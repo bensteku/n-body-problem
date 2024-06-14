@@ -43,3 +43,17 @@ void init_bodies_normal(std::vector<body>& bodies, float min_mass, float max_mas
 
 void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vector<__m256>& x_vec, std::vector<__m256>& y_vec, std::vector<__m256>& m_vec, std::vector<__m256>& r_vec);
 void process_bodies(std::vector<body>& bodies, sim_settings& ss);
+void process_bodies_cuda(std::vector<body>& bodies,
+	std::vector<float>& x,
+	std::vector<float>& y,
+	std::vector<float>& mass,
+	std::vector<float>& radius,
+	std::vector<float>& v_x,
+	std::vector<float>& v_y,
+	float* d_x,
+	float* d_y,
+	float* d_mass,
+	float* d_radius,
+	float* d_v_x,
+	float* d_v_y,
+	sim_settings& ss);

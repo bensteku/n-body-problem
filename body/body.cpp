@@ -4,6 +4,10 @@
 #include <iostream>
 #include <limits>
 #include <omp.h>
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#endif
 
 #include "../misc/util.hpp"
 

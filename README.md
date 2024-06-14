@@ -2,9 +2,12 @@
 
 ![nbody](output.gif)
 
-Implementation of a numeric simulation of the n-body problem. Mostly meant as a playground to explore various optimization approaches like compiler intrinsics. 
+Implementation of a numeric simulation of the n-body problem. Mostly meant as a playground to explore various speed up approaches like compiler intrinsics or CUDA. 
 Made in MSVC C++20 and needs SFML to compile. The paths for SFML within the solution are set to my own, so you'll need to change those to where the SFML headers and lib files are located on your system (info [here](https://www.sfml-dev.org/tutorials/2.6/start-vc.php)).
-Using SIMD and 800 bodies, the simulation runs at ~700 FPS on my system.
+SIMD (AVX-based) and CUDA versions are included as configurations in the VS solution file. Obviously, CUDA needs to be installed for the latter to work.
+
+Currently, using SIMD and 800 bodies, the simulation runs at ~700 FPS on my system. The release contains a binary for x64 system built with SIMD support.
+
 
 ## Controls
 

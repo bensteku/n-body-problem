@@ -9,6 +9,10 @@ Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
 		Debug|x86 = Debug|x86
+		Release_CUDA|x64 = Release_CUDA|x64
+		Release_CUDA|x86 = Release_CUDA|x86
+		Release_SIMD|x64 = Release_SIMD|x64
+		Release_SIMD|x86 = Release_SIMD|x86
 		Release|x64 = Release|x64
 		Release|x86 = Release|x86
 	EndGlobalSection
@@ -17,6 +21,14 @@ Global
 		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Debug|x64.Build.0 = Debug|x64
 		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Debug|x86.ActiveCfg = Debug|Win32
 		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Debug|x86.Build.0 = Debug|Win32
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_CUDA|x64.ActiveCfg = Release_CUDA|x64
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_CUDA|x64.Build.0 = Release_CUDA|x64
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_CUDA|x86.ActiveCfg = Release_CUDA|Win32
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_CUDA|x86.Build.0 = Release_CUDA|Win32
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_SIMD|x64.ActiveCfg = Release_SIMD|x64
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_SIMD|x64.Build.0 = Release_SIMD|x64
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_SIMD|x86.ActiveCfg = Release_SIMD|Win32
+		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release_SIMD|x86.Build.0 = Release_SIMD|Win32
 		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release|x64.ActiveCfg = Release|x64
 		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release|x64.Build.0 = Release|x64
 		{BA6141DB-FB16-4D6D-9A8C-58EEA06D2FC6}.Release|x86.ActiveCfg = Release|Win32
