@@ -95,14 +95,15 @@ SetupScene::SetupScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_r
 
 }
 
-void SetupScene::process_inputs()
+State SetupScene::process_inputs()
 {
 	
 	process_inputs_setup(m_window_ref, m_bodies_ref, m_shapes_ref, m_is_ref, m_ss_ref);
+	return setup;
 
 }
 
-void SetupScene::render()
+void SetupScene::render(State state_before)
 {
 
 	m_window_ref.draw(m_setup_text);
@@ -126,14 +127,15 @@ SetupSceneCircle::SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<bod
 
 }
 
-void SetupSceneCircle::process_inputs()
+State SetupSceneCircle::process_inputs()
 {
 
 	process_inputs_setup_circle(m_window_ref, m_is_ref, m_ss_ref);
+	return setup_circle;
 
 }
 
-void SetupSceneCircle::render()
+void SetupSceneCircle::render(State state_before)
 {
 	
 	// if the desired amount of bodies changed, resize all relevant vectors
@@ -173,14 +175,15 @@ SetupSceneUniform::SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<b
 
 }
 
-void SetupSceneUniform::process_inputs()
+State SetupSceneUniform::process_inputs()
 {
 
 	process_inputs_setup_uniform(m_window_ref, m_is_ref, m_ss_ref);
+	return setup_uniform;
 
 }
 
-void SetupSceneUniform::render()
+void SetupSceneUniform::render(State state_before)
 {
 
 	// if the desired amount of bodies changed, resize all relevant vectors
@@ -220,15 +223,16 @@ SetupSceneNormal::SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<bod
 
 }
 
-void SetupSceneNormal::process_inputs()
+State SetupSceneNormal::process_inputs()
 {
 
 	// works for just as well for normal distribution
 	process_inputs_setup_uniform(m_window_ref, m_is_ref, m_ss_ref);
+	return setup_normal;
 
 }
 
-void SetupSceneNormal::render()
+void SetupSceneNormal::render(State state_before)
 {
 
 	// if the desired amount of bodies changed, resize all relevant vectors
@@ -268,14 +272,15 @@ SetupSceneCustom::SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<bod
 
 }
 
-void SetupSceneCustom::process_inputs()
+State SetupSceneCustom::process_inputs()
 {
 
 	process_inputs_setup_custom(m_window_ref, m_bodies_ref, m_shapes_ref, m_is_ref, m_ss_ref);
+	return setup_custom;
 
 }
 
-void SetupSceneCustom::render()
+void SetupSceneCustom::render(State state_before)
 {
 
 	// if the desired amount of bodies changed, resize all relevant vectors
@@ -304,76 +309,38 @@ SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, 
 
 #	ifdef USE_CUDA
 	// if CUDA is enabled, we allocate memory for our pointers on the GPU
-	m_last_allocation = m_bodies_ref.size();
-	const size_t bytes = sizeof(float) * m_last_allocation;
-	cudaMalloc(&m_d_x, bytes);
-	cudaMalloc(&m_d_y, bytes);
-	cudaMalloc(&m_d_mass, bytes);
-	cudaMalloc(&m_d_radius, bytes);
-	cudaMalloc(&m_d_v_x, bytes);
-	cudaMalloc(&m_d_v_y, bytes);
-	m_h_x.resize(m_last_allocation);
-	m_h_y.resize(m_last_allocation);
-	m_h_mass.resize(m_last_allocation);
-	m_h_radius.resize(m_last_allocation);
-	m_h_v_x.resize(m_last_allocation);
-	m_h_v_y.resize(m_last_allocation);
+	// and send over the data to the GPU
+	m_last_allocation = -1;
+	const size_t bytes = sizeof(body) * m_bodies_ref.size();
+	cudaMalloc(&m_d_bodies, bytes);
 #	endif
 
 }
 
-void SimScene::process_inputs()
+State SimScene::process_inputs()
 {
 
 	process_inputs_sim(m_window_ref, m_is_ref, m_ss_ref);
+	return sim;
 
 }
 
-void SimScene::render()
+void SimScene::render(State state_before)
 {
 
 #	ifdef USE_CUDA
-	// if CUDA is enabled and the user changed the number of bodies,
+	// if CUDA is enabled and the user changed the number of bodies or we're going into this method for the first time since setup
 	// we have to reallocate memory for our GPU pointers
-	if (m_bodies_ref.size() != m_last_allocation)
+	if (state_before != sim)
 	{
-		cudaFree(m_d_x);
-		cudaFree(m_d_y);
-		cudaFree(m_d_mass);
-		cudaFree(m_d_radius);
-		cudaFree(m_d_v_x);
-		cudaFree(m_d_v_y);
+		cudaFree(m_d_bodies);
 		m_last_allocation = m_bodies_ref.size();
-		const size_t bytes = sizeof(float) * m_last_allocation;
-		cudaMalloc(&m_d_x, bytes);
-		cudaMalloc(&m_d_y, bytes);
-		cudaMalloc(&m_d_mass, bytes);
-		cudaMalloc(&m_d_radius, bytes);
-		cudaMalloc(&m_d_v_x, bytes);
-		cudaMalloc(&m_d_v_y, bytes);
-		// the same for our CPU-side holding space
-		m_h_x.resize(m_last_allocation);
-		m_h_y.resize(m_last_allocation);
-		m_h_mass.resize(m_last_allocation);
-		m_h_radius.resize(m_last_allocation);
-		m_h_v_x.resize(m_last_allocation);
-		m_h_v_y.resize(m_last_allocation);
+		const size_t bytes = sizeof(body) * m_last_allocation;
+		cudaMalloc(&m_d_bodies, bytes);
+		cudaMemcpy(m_d_bodies, m_bodies_ref.data(), bytes, cudaMemcpyHostToDevice);
 	}
 
-	process_bodies_cuda(m_bodies_ref,
-						m_h_x,
-						m_h_y,
-						m_h_mass,
-						m_h_radius,
-						m_h_v_x,
-						m_h_v_y,
-						m_d_x,
-						m_d_y,
-						m_d_mass,
-						m_d_radius,
-						m_d_v_x,
-						m_d_v_y,
-						m_ss_ref);
+	process_bodies_cuda(m_bodies_ref, m_d_bodies, m_ss_ref);
 #	elif defined(USE_SIMD)
 	process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers_ref[0], m_registers_ref[1], m_registers_ref[2], m_registers_ref[3]);
 #	else

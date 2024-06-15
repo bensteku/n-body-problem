@@ -51,10 +51,10 @@ int main(int argc, char* argv[])
 	// main loop
 	while (window.isOpen())
 	{
-		scenes[input_info.program_state]->process_inputs();
+		State state_before = scenes[input_info.program_state]->process_inputs();
 
 		window.clear();
-		scenes[input_info.program_state]->render();
+		scenes[input_info.program_state]->render(state_before);
 		window.display();
 	}
 

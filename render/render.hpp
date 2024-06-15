@@ -45,8 +45,8 @@ class Scene
 	public:
 		Scene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 		
-		virtual void process_inputs() = 0;
-		virtual void render() = 0;
+		virtual State process_inputs() = 0;
+		virtual void render(State state_before) = 0;
 		
 };
 
@@ -61,8 +61,8 @@ class SetupScene : public Scene
 	public:
 		SetupScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 
-		void process_inputs();
-		void render();
+		State process_inputs();
+		void render(State state_before);
 
 };
 
@@ -81,8 +81,8 @@ class SetupSceneCircle : public Scene
 	public:
 		SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
 
-		void process_inputs();
-		void render();
+		State process_inputs();
+		void render(State state_before);
 
 };
 
@@ -101,8 +101,8 @@ class SetupSceneUniform : public Scene
 	public:
 		SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
 
-		void process_inputs();
-		void render();
+		State process_inputs();
+		void render(State state_before);
 
 };
 
@@ -121,8 +121,8 @@ class SetupSceneNormal : public Scene
 	public:
 		SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
 
-		void process_inputs();
-		void render();
+		State process_inputs();
+		void render(State state_before);
 
 };
 
@@ -141,8 +141,8 @@ class SetupSceneCustom : public Scene
 	public:
 		SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
 
-		void process_inputs();
-		void render();
+		State process_inputs();
+		void render(State state_before);
 
 };
 
@@ -154,30 +154,16 @@ class SimScene : public Scene
 		// 0:x, 1:y, 2:mass, 3:radius
 		std::array<std::vector<__m256>, 4>& m_registers_ref;
 
-		// if CUDA is used, we create several pointers for memory on the GPU
+		// if CUDA is used, we create a pointer for memory on the GPU
 #		ifdef USE_CUDA
-		float* m_d_x;
-		float* m_d_y;
-		float* m_d_mass;
-		float* m_d_radius;
-		float* m_d_v_x;
-		float* m_d_v_y;
-		// ... and because the data is laid out in terms of body structs
-		// (as opposed to in terms arrays of the struct's members)
-		// we need floats to hold the same data on the cpu as well
-		std::vector<float> m_h_x;
-		std::vector<float> m_h_y;
-		std::vector<float> m_h_mass;
-		std::vector<float> m_h_radius;
-		std::vector<float> m_h_v_x;
-		std::vector<float> m_h_v_y;
+		body* m_d_bodies;
 		// memory to keep track of size of last allocation
-		size_t m_last_allocation = 0;
+		int m_last_allocation = -1;
 #		endif
 	public:
 		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
 
-		void process_inputs();
-		void render();
+		State process_inputs();
+		void render(State state_before);
 
 };
