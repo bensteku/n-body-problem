@@ -307,14 +307,6 @@ SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, 
 	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
 {
 
-#	ifdef USE_CUDA
-	// if CUDA is enabled, we allocate memory for our pointers on the GPU
-	// and send over the data to the GPU
-	m_last_allocation = -1;
-	const size_t bytes = sizeof(body) * m_bodies_ref.size();
-	cudaMalloc(&m_d_bodies, bytes);
-#	endif
-
 }
 
 State SimScene::process_inputs()
@@ -334,13 +326,17 @@ void SimScene::render(State state_before)
 	if (state_before != sim)
 	{
 		cudaFree(m_d_bodies);
-		m_last_allocation = m_bodies_ref.size();
-		const size_t bytes = sizeof(body) * m_last_allocation;
+		cudaFree(m_d_interactions_x);
+		cudaFree(m_d_interactions_y);
+		const size_t bytes = sizeof(body) * m_bodies_ref.size();
 		cudaMalloc(&m_d_bodies, bytes);
+		const size_t bytes2 = sizeof(float) * m_bodies_ref.size() * m_bodies_ref.size();
+		cudaMalloc(&m_d_interactions_x, bytes2);
+		cudaMalloc(&m_d_interactions_y, bytes2);
 		cudaMemcpy(m_d_bodies, m_bodies_ref.data(), bytes, cudaMemcpyHostToDevice);
 	}
 
-	process_bodies_cuda(m_bodies_ref, m_d_bodies, m_ss_ref);
+	process_bodies_cuda(m_bodies_ref, m_d_bodies, m_d_interactions_x, m_d_interactions_y, m_ss_ref);
 #	elif defined(USE_SIMD)
 	process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers_ref[0], m_registers_ref[1], m_registers_ref[2], m_registers_ref[3]);
 #	else

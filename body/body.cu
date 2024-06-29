@@ -5,6 +5,8 @@
 
 #include "body.hpp"
 
+#define reduce_threads 1024
+
 __global__ void calc_force_cuda(body* bodies, float g, float t, int N, int it)
 {
 
@@ -47,19 +49,19 @@ __global__ void calc_force_cuda(body* bodies, float g, float t, int N, int it)
 
 }
 
-__global__ void calc_force_cuda_full(body* bodies, float g, float t, int N)
+__global__ void calc_force_cuda_full(body* bodies, float* interactions_x, float* interactions_y, float g, float t, int N)
 {
 
 	int tid_x = blockIdx.x * blockDim.x + threadIdx.x;
 	int tid_y = blockIdx.y * blockDim.y + threadIdx.y;
 	int tid = tid_x + tid_y;
 
-	if (tid_x < N && tid_y < N)
+	if (tid_x < N && tid_y < N && tid_y != tid_x)
 	{
 		//runs Newton's formula
 		float dx = bodies[tid_x].x - bodies[tid_y].x;
 		float dy = bodies[tid_x].y - bodies[tid_y].y;
-
+		
 		float dist = dx * dx + dy * dy;
 
 		float force, dist_inv;
@@ -74,18 +76,61 @@ __global__ void calc_force_cuda_full(body* bodies, float g, float t, int N)
 			dist_inv = rsqrtf(dist);  // ignore the squiggle lines, this is a CUDA inbuilt function
 		}
 
+		// write to output pointer
 		dx *= dist_inv;
-		// no writing on the iterator output field
-		// a) would not work anyway, because thousands of GPU threads will try to do it simultaneously and corrupt the result and
-		// b) we get the correct result anyway, because when the iterator changes the previous iterator's values will be changed then
-		//v_x[it] += dx * force * t / m[it];
-		atomicAdd(&(bodies[tid_y].v_x), -dx * force * t / bodies[tid_y].m);
-		//bodies[tid_y].v_x -= dx * force * t / bodies[tid_y].m;
+		interactions_x[tid_y * N + tid_x] = -dx * force * t / bodies[tid_y].m;
 
 		dy *= dist_inv;
-		//v_y[it] += dy * force * t / m[it];
-		atomicAdd(&(bodies[tid_y].v_y), -dy * force * t / bodies[tid_y].m);
-		//bodies[tid_y].v_y -= dy * force * t / bodies[tid_y].m;
+		interactions_y[tid_y * N + tid_x] = -dy * force * t / bodies[tid_y].m;
+	}
+
+}
+
+__global__ void reduce_interactions(body* bodies, float* interactions_x, float* interactions_y, int N)
+{
+	__shared__ float shared_x[reduce_threads];
+	__shared__ float shared_y[reduce_threads];
+
+	int row = blockIdx.x;
+	int tid = threadIdx.x;
+
+	// reduce reduce_threads many elements in one go in one row
+	float res_x = 0;
+	float res_y = 0;
+	for (int i = 0; i < ceilf(static_cast<float>(N) / reduce_threads); i++)
+	{
+		int idx = i * reduce_threads + tid;
+		// load into shared memory
+		if (idx < N)
+		{
+			shared_x[tid] = interactions_x[row * N + idx];
+			shared_y[tid] = interactions_y[row * N + idx];
+		}
+		__syncthreads();
+
+		// go over the elements with a stride
+		for (int s = blockDim.x / 2; s > 0; s >>= 1)
+		{
+			if (tid < s && tid + s < N)
+			{
+				shared_x[tid] += shared_x[tid + s];
+				shared_y[tid] += shared_y[tid + s];
+			}
+			__syncthreads();
+		}
+
+		// write result of one pass into the accumulator
+		if (tid == 0)
+		{
+			res_x += shared_x[0];
+			res_y += shared_y[0];
+		}
+	}
+	// write accumulator into bodies pointer
+	if (tid == 0)
+	{
+		bodies[row].v_x += res_x;
+		bodies[row].v_y += res_y;
 	}
 
 }
@@ -104,24 +149,20 @@ __global__ void calc_movement_cuda(body* bodies, float t, int N)
 
 }
 
-void process_bodies_cuda(std::vector<body>& bodies,	body* d_bodies,	sim_settings& ss)
+void process_bodies_cuda(std::vector<body>& bodies,	body* d_bodies, float* d_interactions_x, float* d_interactions_y, sim_settings& ss)
 {
 
 	int n_threads = 32;
 	int n_blocks = (bodies.size() + n_threads - 1) / n_threads;
 
-	/*
-	// run calculation on the GPU
-	for (size_t i = 0; i < bodies.size(); i++)
-	{
-		calc_force_cuda<<<n_blocks, n_threads>>>(d_bodies, ss.g, ss.timestep, bodies.size(), i);
-	}
-	*/
 	dim3 threads_2d(n_threads, n_threads);
 	dim3 blocks_2d(n_blocks, n_blocks);
-	calc_force_cuda_full<<<blocks_2d, threads_2d>>> (d_bodies, ss.g, ss.timestep, bodies.size());
-	cudaError_t err = cudaGetLastError();
+	// writes all body-body interactions into the d_interactions float pointer
+	calc_force_cuda_full<<<blocks_2d, threads_2d>>>(d_bodies, d_interactions_x, d_interactions_y, ss.g, ss.timestep, bodies.size());
 	// wait for all calculations to finish
+	cudaDeviceSynchronize();
+	// reduces the interactions matrices into one float per body
+	reduce_interactions<<<bodies.size(), reduce_threads >> >(d_bodies, d_interactions_x, d_interactions_y, bodies.size());
 	cudaDeviceSynchronize();
 	// run movement calc on the GPU
 	calc_movement_cuda<<<n_blocks, n_threads>>>(d_bodies, ss.timestep, bodies.size());

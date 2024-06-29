@@ -157,8 +157,8 @@ class SimScene : public Scene
 		// if CUDA is used, we create a pointer for memory on the GPU
 #		ifdef USE_CUDA
 		body* m_d_bodies;
-		// memory to keep track of size of last allocation
-		int m_last_allocation = -1;
+		float* m_d_interactions_x;
+		float* m_d_interactions_y;
 #		endif
 	public:
 		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
