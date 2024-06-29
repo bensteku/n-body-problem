@@ -59,8 +59,6 @@ __global__ void calc_force_cuda_full(body* bodies, float g, float t, int N)
 		//runs Newton's formula
 		float dx = bodies[tid_x].x - bodies[tid_y].x;
 		float dy = bodies[tid_x].y - bodies[tid_y].y;
-		if (tid < 0)
-			printf("%f %f", dx, dy);
 
 		float dist = dx * dx + dy * dy;
 
@@ -81,11 +79,13 @@ __global__ void calc_force_cuda_full(body* bodies, float g, float t, int N)
 		// a) would not work anyway, because thousands of GPU threads will try to do it simultaneously and corrupt the result and
 		// b) we get the correct result anyway, because when the iterator changes the previous iterator's values will be changed then
 		//v_x[it] += dx * force * t / m[it];
-		bodies[tid_y].v_x -= dx * force * t / bodies[tid_y].m;
+		atomicAdd(&(bodies[tid_y].v_x), -dx * force * t / bodies[tid_y].m);
+		//bodies[tid_y].v_x -= dx * force * t / bodies[tid_y].m;
 
 		dy *= dist_inv;
 		//v_y[it] += dy * force * t / m[it];
-		bodies[tid_y].v_y -= dy * force * t / bodies[tid_y].m;
+		atomicAdd(&(bodies[tid_y].v_y), -dy * force * t / bodies[tid_y].m);
+		//bodies[tid_y].v_y -= dy * force * t / bodies[tid_y].m;
 	}
 
 }
@@ -121,9 +121,6 @@ void process_bodies_cuda(std::vector<body>& bodies,	body* d_bodies,	sim_settings
 	dim3 blocks_2d(n_blocks, n_blocks);
 	calc_force_cuda_full<<<blocks_2d, threads_2d>>> (d_bodies, ss.g, ss.timestep, bodies.size());
 	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(err));
-	}
 	// wait for all calculations to finish
 	cudaDeviceSynchronize();
 	// run movement calc on the GPU
