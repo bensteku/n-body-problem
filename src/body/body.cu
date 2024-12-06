@@ -49,7 +49,7 @@ __global__ void calc_force_cuda(body* bodies, float g, float t, int N, int it)
 
 }
 
-__global__ void calc_force_cuda_full(body* bodies, float* interactions_x, float* interactions_y, float g, float t, int N)
+__global__ void calc_force_cuda_full(const body* bodies, float* interactions_x, float* interactions_y, const float g, const float t, const int N)
 {
 
 	int tid_x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -86,7 +86,7 @@ __global__ void calc_force_cuda_full(body* bodies, float* interactions_x, float*
 
 }
 
-__global__ void reduce_interactions(body* bodies, float* interactions_x, float* interactions_y, int N)
+__global__ void reduce_interactions(body* bodies, const float* interactions_x, const float* interactions_y, const int N)
 {
 	__shared__ float shared_x[reduce_threads];
 	__shared__ float shared_y[reduce_threads];
@@ -135,7 +135,7 @@ __global__ void reduce_interactions(body* bodies, float* interactions_x, float* 
 
 }
 
-__global__ void calc_movement_cuda(body* bodies, float t, int N)
+__global__ void calc_movement_cuda(body* bodies, const float t, const int N)
 {
 
 	// global thread ID using the formula from the CUDA docs
@@ -149,7 +149,7 @@ __global__ void calc_movement_cuda(body* bodies, float t, int N)
 
 }
 
-void process_bodies_cuda(std::vector<body>& bodies,	body* d_bodies, float* d_interactions_x, float* d_interactions_y, sim_settings& ss)
+void process_bodies_cuda(std::vector<body>& bodies,	body* d_bodies, float* d_interactions_x, float* d_interactions_y, const sim_settings& ss)
 {
 
 	int n_threads = 32;
