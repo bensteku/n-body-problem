@@ -1,8 +1,13 @@
 #include <SFML/Graphics.hpp>
 
+#ifdef THREED
+#include <GL/glew.h>
+#endif
+
 #include <thread>
 #include <iostream>
 #include <immintrin.h>
+
 
 #include "misc/settings.hpp"
 #include "misc/util.hpp"
@@ -32,7 +37,7 @@ int main(int argc, char* argv[])
 
 	// struct that will contain settings for the physical calculations
 	// modifiable by user input, uses values from settings.hpp as default
-	sim_settings sim_info{ settings::timestep, settings::g, settings::n_bodies };
+	sim_settings sim_info {settings::timestep, settings::g, settings::n_bodies};
 
 	// array of registers that we hand off to the simulation in case SIMD is used
 	// we handle them this way such that resizing them all is easier in case the user

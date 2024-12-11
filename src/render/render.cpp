@@ -42,13 +42,12 @@ Scene::Scene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::v
 void Scene::update_shapes()
 {
 	
-	const std::vector<body>& const_bodies_ref = const_cast<const std::vector<body>&>(m_bodies_ref);
 	for (size_t i = 0; i < m_bodies_ref.size(); i++)
 	{
-		const float x_pos = settings::window_width_h + settings::window_width_h * (const_bodies_ref[i].x + m_is_ref.center_x) / (100 * m_is_ref.zoom);
-		const float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * (const_bodies_ref[i].y + m_is_ref.center_y) / (100 * m_is_ref.zoom);
+		const float x_pos = settings::window_width_h + settings::window_width_h * (m_bodies_ref[i].x + m_is_ref.center_x) / (100 * m_is_ref.zoom);
+		const float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * (m_bodies_ref[i].y + m_is_ref.center_y) / (100 * m_is_ref.zoom);
 		m_shapes_ref[i].setPosition(x_pos, y_pos);
-		const float radius = const_bodies_ref[i].m / (settings::mass_radius_factor * m_is_ref.zoom);
+		const float radius = m_bodies_ref[i].m / (settings::mass_radius_factor * m_is_ref.zoom);
 		m_shapes_ref[i].setOrigin(radius, radius);
 		m_shapes_ref[i].setRadius(radius);
 		m_window_ref.draw(m_shapes_ref[i]);

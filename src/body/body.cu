@@ -162,7 +162,7 @@ void process_bodies_cuda(std::vector<body>& bodies,	body* d_bodies, float* d_int
 	// wait for all calculations to finish
 	cudaDeviceSynchronize();
 	// reduces the interactions matrices into one float per body
-	reduce_interactions<<<bodies.size(), reduce_threads >> >(d_bodies, d_interactions_x, d_interactions_y, bodies.size());
+	reduce_interactions<<<bodies.size(), reduce_threads>>>(d_bodies, d_interactions_x, d_interactions_y, bodies.size());
 	cudaDeviceSynchronize();
 	// run movement calc on the GPU
 	calc_movement_cuda<<<n_blocks, n_threads>>>(d_bodies, ss.timestep, bodies.size());
