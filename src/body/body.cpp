@@ -16,14 +16,17 @@
 	The y-axis will be cropped according to the aspect ratio.
 */
 
-void init_bodies_uniform(std::vector<body>& bodies, float min_mass, float max_mass, float x_range, float y_range)
+void init_bodies_uniform(std::vector<body>& bodies, sim_settings& ss)
 {
 
 	std::random_device dev;
 	std::mt19937 rng(dev());
-	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
-	std::uniform_real_distribution<float> x_uniform(-x_range, x_range);
-	std::uniform_real_distribution<float> y_uniform(-y_range * settings::aspect_ratio, y_range * settings::aspect_ratio);	
+	std::uniform_real_distribution<float> m_dist(ss.min_mass, ss.max_mass);
+	std::uniform_real_distribution<float> x_uniform(-ss.x_range, ss.x_range);
+	std::uniform_real_distribution<float> y_uniform(-ss.y_range * settings::aspect_ratio, ss.y_range * settings::aspect_ratio);	
+	#ifdef THREED
+	std::uniform_real_distribution<float> z_uniform(-ss.z_range, ss.z_range);
+	#endif
 
 	for (body& it : bodies)
 	{
@@ -33,20 +36,25 @@ void init_bodies_uniform(std::vector<body>& bodies, float min_mass, float max_ma
 		it.r = it.m / settings::mass_radius_factor;
 		it.v_x = 0;
 		it.v_y = 0;
+		#ifdef THREED
+		it.z = z_uniform(rng);
+		it.v_z = 0;
+		#endif
 	}
 
 }
 
-void init_bodies_circle(std::vector<body>& bodies, float min_mass, float max_mass, float radius, float deviation)
+void init_bodies_circle(std::vector<body>& bodies, sim_settings& ss)
 {
 
 	std::random_device dev;
 	std::mt19937 rng(dev());
-	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
-	std::uniform_real_distribution<float> random_radius((1 - deviation) * radius, (1 + deviation) * radius);
+	std::uniform_real_distribution<float> m_dist(ss.min_mass, ss.max_mass);
+	std::uniform_real_distribution<float> random_radius((1 - ss.circle_deviation) * ss.circle_radius, (1 + ss.circle_deviation) * ss.circle_radius);
 
+	#ifndef THREED
 	float theta = 0;
-	float t_increment = 2 * settings::pi / bodies.size();
+	constexpr float t_increment = 2 * settings::pi / bodies.size();
 	for (body& it : bodies)
 	{
 		float r = random_radius(rng);
@@ -58,18 +66,46 @@ void init_bodies_circle(std::vector<body>& bodies, float min_mass, float max_mas
 		it.v_y = 0;
 		theta += t_increment;
 	}
+	#else
+	constexpr float phi = settings::pi * 0.763932;
+	for (int i = 0; i < bodies.size(); ++i)
+	{
+		float r = random_radius(rng);
+
+		float y = 1 - (i / static_cast<float>(bodies.size() - 1)) * 2;
+		float r_norm = std::sqrt(1 - y * y);
+		float theta = phi * i;
+
+		float x = cos(theta) * r_norm;
+		float z = sin(theta) * r_norm;
+
+		bodies[i].x = r * x;
+		bodies[i].y = r * y;
+		bodies[i].z = r * z;
+
+		bodies[i].m = m_dist(rng);
+		bodies[i].r = bodies[i].m / settings::mass_radius_factor;
+
+		bodies[i].v_x = 0;
+		bodies[i].v_y = 0;
+		bodies[i].v_z = 0;
+	}
+	#endif
 
 }
 
-void init_bodies_normal(std::vector<body>& bodies, float min_mass, float max_mass, float center_x, float center_y, float std_x, float std_y)
+void init_bodies_normal(std::vector<body>& bodies, sim_settings& ss)
 {
 
 	std::random_device dev;
 	std::mt19937 rng(dev());
-	std::uniform_real_distribution<float> m_dist(min_mass, max_mass);
-	std::normal_distribution<float> x_normal(center_x, std_x);
-	std::normal_distribution<float> y_normal(center_y, std_y);
-	
+	std::uniform_real_distribution<float> m_dist(ss.min_mass, ss.max_mass);
+	std::normal_distribution<float> x_normal(0, ss.x_range);
+	std::normal_distribution<float> y_normal(0, ss.y_range);
+	#ifdef THREED
+	std::normal_distribution<float> z_normal(0, ss.z_range);
+	#endif
+
 	for (body& it : bodies)
 	{
 		it.x = x_normal(rng);
@@ -78,6 +114,10 @@ void init_bodies_normal(std::vector<body>& bodies, float min_mass, float max_mas
 		it.r = it.m / settings::mass_radius_factor;
 		it.v_x = 0;
 		it.v_y = 0;
+		#ifdef THREED
+		it.z = z_normal(rng);
+		it.v_z = 0;
+		#endif
 	}
 
 }
@@ -88,7 +128,12 @@ void calc_force(body& body1, body& body2, sim_settings& ss)
 	float d_x = body1.x - body2.x;
 	float d_y = body1.y - body2.y;
 
+	#ifndef THREED
 	float dist = d_x * d_x + d_y * d_y;  // no square root needed here because the formula for the force squares it anyway
+	#else
+	float d_z = body1.z - body2.z;
+	float dist = d_x * d_x + d_y * d_y + d_z * d_z;
+	#endif
 
 	float force;
 	if ((body1.r + body2.r) * (body1.r + body2.r) >= dist)
@@ -117,6 +162,12 @@ void calc_force(body& body1, body& body2, sim_settings& ss)
 	body1.v_y += d_y * force * ss.timestep / body1.m;
 	body2.v_y -= d_y * force * ss.timestep / body2.m;
 
+	#ifdef THREED
+	// same for z
+	body1.v_z += d_z * force * ss.timestep / body1.m;
+	body1.v_z -= d_z * force * ss.timestep / body2.m;
+	#endif
+
 }
 
 void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vector<__m256>& x_vec, std::vector<__m256>& y_vec, std::vector<__m256>& mass_vec, std::vector<__m256>& r_vec)
@@ -139,6 +190,9 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 		const size_t indices[8] = { std::min(i * 8, num_elements - 1), std::min(i * 8 + 1, num_elements - 1), std::min(i * 8 + 2, num_elements - 1), std::min(i * 8 + 3, num_elements - 1), std::min(i * 8 + 4, num_elements - 1), std::min(i * 8 + 5, num_elements - 1), std::min(i * 8 + 6, num_elements - 1), std::min(i * 8 + 7, num_elements - 1) };
 		x_vec[i] = _mm256_set_ps(bodies[indices[7]].x, bodies[indices[6]].x, bodies[indices[5]].x, bodies[indices[4]].x, bodies[indices[3]].x, bodies[indices[2]].x, bodies[indices[1]].x, bodies[indices[0]].x);
 		y_vec[i] = _mm256_set_ps(bodies[indices[7]].y, bodies[indices[6]].y, bodies[indices[5]].y, bodies[indices[4]].y, bodies[indices[3]].y, bodies[indices[2]].y, bodies[indices[1]].y, bodies[indices[0]].y);
+		#ifdef THREED
+		z_vec[i] = _mm256_set_ps(bodies[indices[7]].z, bodies[indices[6]].z, bodies[indices[5]].z, bodies[indices[4]].z, bodies[indices[3]].z, bodies[indices[2]].z, bodies[indices[1]].z, bodies[indices[0]].z);
+		#endif
 		mass_vec[i] = _mm256_set_ps(bodies[indices[7]].m, bodies[indices[6]].m, bodies[indices[5]].m, bodies[indices[4]].m, bodies[indices[3]].m, bodies[indices[2]].m, bodies[indices[1]].m, bodies[indices[0]].m);
 		r_vec[i] = _mm256_set_ps(bodies[indices[7]].r, bodies[indices[6]].r, bodies[indices[5]].r, bodies[indices[4]].r, bodies[indices[3]].r, bodies[indices[2]].r, bodies[indices[1]].r, bodies[indices[0]].r);
 	}

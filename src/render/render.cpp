@@ -148,7 +148,7 @@ void SetupSceneCircle::render(State state_before)
 			it.resize(num_packed_elements);
 	}
 	// set up bodies in the circle as determined by user inputs
-	init_bodies_circle(m_bodies_ref, m_ss_ref.min_mass, m_ss_ref.max_mass, m_ss_ref.circle_radius, m_ss_ref.circle_deviation);
+	init_bodies_circle(m_bodies_ref, m_ss_ref);
 	
 	update_shapes();
 
@@ -196,7 +196,7 @@ void SetupSceneUniform::render(State state_before)
 			it.resize(num_packed_elements);
 	}
 	// set up bodies uniformly random
-	init_bodies_uniform(m_bodies_ref, m_ss_ref.min_mass, m_ss_ref.max_mass, m_ss_ref.x_range, m_ss_ref.y_range);
+	init_bodies_uniform(m_bodies_ref, m_ss_ref);
 
 	update_shapes();
 
@@ -245,7 +245,7 @@ void SetupSceneNormal::render(State state_before)
 			it.resize(num_packed_elements);
 	}
 	// set up bodies uniformly random
-	init_bodies_normal(m_bodies_ref, m_ss_ref.min_mass, m_ss_ref.max_mass, 0, 0, m_ss_ref.x_range, m_ss_ref.y_range);
+	init_bodies_normal(m_bodies_ref, m_ss_ref);
 
 	update_shapes();
 
