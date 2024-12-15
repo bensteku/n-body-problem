@@ -35,21 +35,28 @@ inline __m256 is_infinity(__m256 x)
 }
 
 // function to reduce a register down to a single float
-// modified by me, but originally taken from https://stackoverflow.com/a/49943540
+// taken from https://stackoverflow.com/a/13222410
 inline float reduce_register(__m256 v)
 {
 
-	// step 1: split 8 floats into two registers of 4 floats and add them together
-	__m128 vlow = _mm256_castps256_ps128(v);
-	__m128 vhigh = _mm256_extractf128_ps(v, 1); // high 128
-	vlow = _mm_add_ps(vlow, vhigh);     // reduce down to 128, 4 numbers
-
-	// step 2: do the same again, after which the first 64 bits hold two 32bit floats
-	__m128 high64 = _mm_unpackhi_ps(vlow, vlow);  // extract upper 64 bits
-	// the first 64 bits now hold the two sums of the rest of the register
-	vlow = _mm_add_ss(vlow, _mm_shuffle_ps(high64, high64, _MM_SHUFFLE(0, 2, 1, 3)));
-	// add the register to a shuffled version of itself, where the shuffle moves the second 32 bits into the first 32 bits
-	vlow = _mm_add_ss(vlow, _mm_shuffle_ps(vlow, vlow, _MM_SHUFFLE(1, 0, 3, 4)));
-	return  _mm_cvtss_f32(vlow);  // extract the overall sum from the first 32 bits
+    // hiQuad = ( x7, x6, x5, x4 )
+    const __m128 hiQuad = _mm256_extractf128_ps(v, 1);
+    // loQuad = ( x3, x2, x1, x0 )
+    const __m128 loQuad = _mm256_castps256_ps128(v);
+    // sumQuad = ( x3 + x7, x2 + x6, x1 + x5, x0 + x4 )
+    const __m128 sumQuad = _mm_add_ps(loQuad, hiQuad);
+    // loDual = ( -, -, x1 + x5, x0 + x4 )
+    const __m128 loDual = sumQuad;
+    // hiDual = ( -, -, x3 + x7, x2 + x6 )
+    const __m128 hiDual = _mm_movehl_ps(sumQuad, sumQuad);
+    // sumDual = ( -, -, x1 + x3 + x5 + x7, x0 + x2 + x4 + x6 )
+    const __m128 sumDual = _mm_add_ps(loDual, hiDual);
+    // lo = ( -, -, -, x0 + x2 + x4 + x6 )
+    const __m128 lo = sumDual;
+    // hi = ( -, -, -, x1 + x3 + x5 + x7 )
+    const __m128 hi = _mm_shuffle_ps(sumDual, sumDual, 0x1);
+    // sum = ( -, -, -, x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7 )
+    const __m128 sum = _mm_add_ss(lo, hi);
+    return _mm_cvtss_f32(sum);
 
 }
