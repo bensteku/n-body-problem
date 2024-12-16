@@ -143,7 +143,7 @@ void SetupSceneCircle::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers_ref)
 			it.resize(num_packed_elements);
 	}
@@ -191,7 +191,7 @@ void SetupSceneUniform::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers_ref)
 			it.resize(num_packed_elements);
 	}
@@ -240,7 +240,7 @@ void SetupSceneNormal::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers_ref)
 			it.resize(num_packed_elements);
 	}
@@ -288,7 +288,7 @@ void SetupSceneCustom::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		const size_t num_packed_elements = 1 + m_ss_ref.n / 8;
+		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers_ref)
 			it.resize(num_packed_elements);
 	}

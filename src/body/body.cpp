@@ -3,7 +3,6 @@
 #include <random>
 #include <iostream>
 #include <limits>
-#include <omp.h>
 #ifdef USE_CUDA
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
@@ -54,7 +53,7 @@ void init_bodies_circle(std::vector<body>& bodies, sim_settings& ss)
 
 	#ifndef THREED
 	float theta = 0;
-	constexpr float t_increment = 2 * settings::pi / bodies.size();
+	const float t_increment = 2 * settings::pi / bodies.size();
 	for (body& it : bodies)
 	{
 		float r = random_radius(rng);
@@ -196,7 +195,7 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 		mass_vec[i] = _mm256_set_ps(bodies[indices[7]].m, bodies[indices[6]].m, bodies[indices[5]].m, bodies[indices[4]].m, bodies[indices[3]].m, bodies[indices[2]].m, bodies[indices[1]].m, bodies[indices[0]].m);
 		r_vec[i] = _mm256_set_ps(bodies[indices[7]].r, bodies[indices[6]].r, bodies[indices[5]].r, bodies[indices[4]].r, bodies[indices[3]].r, bodies[indices[2]].r, bodies[indices[1]].r, bodies[indices[0]].r);
 	}
-//#pragma omp parallel for  // significantly reduces performance atm
+
 	for (int j = 0; j < num_elements; j++)
 	{
 		__m256 nan_check_reg;
