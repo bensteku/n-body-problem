@@ -111,8 +111,8 @@ void SetupScene::render(State state_before)
 
 // Scene class for the init screen with a circle
 
-SetupSceneCircle::SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
-	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+SetupSceneCircle::SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref)
 {
 
 	m_setup_circle_text.setFont(m_font);
@@ -144,7 +144,7 @@ void SetupSceneCircle::render(State state_before)
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
-		for (auto& it : m_registers_ref)
+		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
 	}
 	// set up bodies in the circle as determined by user inputs
@@ -159,8 +159,8 @@ void SetupSceneCircle::render(State state_before)
 
 // Scene class for uniform random initialization
 
-SetupSceneUniform::SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
-	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+SetupSceneUniform::SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref)
 {
 
 	m_setup_uniform_text.setFont(m_font);
@@ -191,9 +191,11 @@ void SetupSceneUniform::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
+		#ifdef USE_SIMD
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
-		for (auto& it : m_registers_ref)
+		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
+		#endif
 	}
 	// set up bodies uniformly random
 	init_bodies_uniform(m_bodies_ref, m_ss_ref);
@@ -207,8 +209,8 @@ void SetupSceneUniform::render(State state_before)
 
 // Scene class for the normal distributed intialization
 
-SetupSceneNormal::SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
-	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+SetupSceneNormal::SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref)
 {
 
 	m_setup_normal_text.setFont(m_font);
@@ -240,9 +242,11 @@ void SetupSceneNormal::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
+		#ifdef USE_SIMD
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
-		for (auto& it : m_registers_ref)
+		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
+		#endif
 	}
 	// set up bodies uniformly random
 	init_bodies_normal(m_bodies_ref, m_ss_ref);
@@ -256,8 +260,8 @@ void SetupSceneNormal::render(State state_before)
 
 // Scene class for custom initialization
 
-SetupSceneCustom::SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
-	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+SetupSceneCustom::SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref)
 {
 
 	m_setup_custom_text.setFont(m_font);
@@ -288,9 +292,11 @@ void SetupSceneCustom::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
+		#ifdef USE_SIMD
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
-		for (auto& it : m_registers_ref)
+		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
+		#endif
 	}
 
 	update_shapes();
@@ -302,8 +308,8 @@ void SetupSceneCustom::render(State state_before)
 
 // Scene class for the actual simulation
 
-SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers) :
-	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref), m_registers_ref(registers)
+SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref) :
+	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref)
 {
 
 }
@@ -337,7 +343,7 @@ void SimScene::render(State state_before)
 
 	process_bodies_cuda(m_bodies_ref, m_d_bodies, m_d_interactions_x, m_d_interactions_y, m_ss_ref);
 #	elif defined(USE_SIMD)
-	process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers_ref[0], m_registers_ref[1], m_registers_ref[2], m_registers_ref[3]);
+	process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers[0], m_registers[1], m_registers[2], m_registers[3]);
 #	else
 	process_bodies(m_bodies_ref, m_ss_ref);
 #	endif

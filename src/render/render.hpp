@@ -35,6 +35,11 @@ class Scene
 		std::vector<sf::CircleShape>& m_shapes_ref;
 		input_settings& m_is_ref;
 		sim_settings& m_ss_ref;
+		#ifdef USE_SIMD
+		// reference to the vector that will contain our SIMD registers
+		static inline std::array<std::vector<__m256>, 4> m_registers = set_up_simd_registers(settings::n_bodies);
+		#endif
+
 
 		static inline sf::Font m_font;
 		static inline sf::Text m_upper_left_text;
@@ -47,7 +52,7 @@ class Scene
 		
 		virtual State process_inputs() = 0;
 		virtual void render(State state_before) = 0;
-		
+
 };
 
 class SetupScene : public Scene
@@ -70,8 +75,6 @@ class SetupSceneCircle : public Scene
 {
 	
 	private:
-		std::array<std::vector<__m256>, 4>& m_registers_ref;
-
 		sf::Text m_setup_circle_text;
 
 		const std::string m_settings_circle_str = \
@@ -79,7 +82,7 @@ class SetupSceneCircle : public Scene
 		// buffer when the user changes the amount of bodies
 		size_t m_previous_size = 0;
 	public:
-		SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+		SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 
 		State process_inputs();
 		void render(State state_before);
@@ -90,8 +93,6 @@ class SetupSceneUniform : public Scene
 {
 
 	private:
-		std::array<std::vector<__m256>, 4>& m_registers_ref;
-
 		sf::Text m_setup_uniform_text;
 
 		 const std::string m_settings_uniform_str = \
@@ -99,7 +100,7 @@ class SetupSceneUniform : public Scene
 		 // buffer when the user changes the amount of bodies
 		 size_t m_previous_size = 0;
 	public:
-		SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+		SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 
 		State process_inputs();
 		void render(State state_before);
@@ -110,8 +111,6 @@ class SetupSceneNormal : public Scene
 {
 
 	private:
-		std::array<std::vector<__m256>, 4>& m_registers_ref;
-
 		sf::Text m_setup_normal_text;
 
 		const std::string m_settings_normal_str = \
@@ -119,7 +118,7 @@ class SetupSceneNormal : public Scene
 		// buffer when the user changes the amount of bodies
 		size_t m_previous_size = 0;
 	public:
-		SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+		SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 
 		State process_inputs();
 		void render(State state_before);
@@ -130,8 +129,6 @@ class SetupSceneCustom : public Scene
 {
 
 	private:
-		std::array<std::vector<__m256>, 4>& m_registers_ref;
-
 		sf::Text m_setup_custom_text;
 
 		const std::string m_settings_custom_str = \
@@ -139,7 +136,7 @@ class SetupSceneCustom : public Scene
 		// buffer when the user changes the amount of bodies
 		size_t m_previous_size = 0;
 	public:
-		SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+		SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 
 		State process_inputs();
 		void render(State state_before);
@@ -150,18 +147,14 @@ class SimScene : public Scene
 {
 
 	private:
-		// registers for the SIMD case
-		// 0:x, 1:y, 2:mass, 3:radius
-		std::array<std::vector<__m256>, 4>& m_registers_ref;
-
-		// if CUDA is used, we create a pointer for memory on the GPU
+		// if CUDA is used, we create pointers for memory on the GPU
 #		ifdef USE_CUDA
 		body* m_d_bodies;
 		float* m_d_interactions_x;
 		float* m_d_interactions_y;
 #		endif
 	public:
-		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref, std::array<std::vector<__m256>, 4>& registers);
+		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
 
 		State process_inputs();
 		void render(State state_before);

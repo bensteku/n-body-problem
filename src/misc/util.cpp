@@ -3,7 +3,7 @@
 std::array<std::vector<__m256>, 4> set_up_simd_registers(size_t num_elements)
 {
 
-	const size_t num_packed_elements = 1 + num_elements / 8;
+	const size_t num_packed_elements = std::ceil(static_cast<float>(num_elements) / 8);
 
 	std::vector<__m256> x_vec;
 	std::vector<__m256> y_vec;

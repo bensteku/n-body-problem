@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 #include <array>
+#include <cmath>
 #include "immintrin.h"
 
 std::array<std::vector<__m256>, 4> set_up_simd_registers(size_t num_elements);

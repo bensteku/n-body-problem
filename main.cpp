@@ -52,18 +52,15 @@ int main(int argc, char* argv[])
 	// modifiable by user input, uses values from settings.hpp as default
 	sim_settings sim_info {settings::timestep, settings::g, settings::n_bodies};
 
-	// array of registers that we hand off to the simulation in case SIMD is used
-	// we handle them this way such that resizing them all is easier in case the user
-	// increases the amount of bodies floating around
-	std::array<std::vector<__m256>, 4> registers = set_up_simd_registers(settings::n_bodies);
-
 	// set up the various scenes that make up the program
 	SetupScene setup_scene(window, bodies, shapes, input_info, sim_info);
-	SetupSceneCircle setup_circle_scene(window, bodies, shapes, input_info, sim_info, registers);
-	SetupSceneUniform setup_uniform_scene(window, bodies, shapes, input_info, sim_info, registers);
-	SetupSceneNormal setup_normal_scene(window, bodies, shapes, input_info, sim_info, registers);
-	SetupSceneCustom setup_custom_scene(window, bodies, shapes, input_info, sim_info, registers);
-	SimScene sim_scene(window, bodies, shapes, input_info, sim_info, registers);
+	SetupSceneCircle setup_circle_scene(window, bodies, shapes, input_info, sim_info);
+	SetupSceneUniform setup_uniform_scene(window, bodies, shapes, input_info, sim_info);
+	SetupSceneNormal setup_normal_scene(window, bodies, shapes, input_info, sim_info);
+	SetupSceneCustom setup_custom_scene(window, bodies, shapes, input_info, sim_info);
+	SimScene sim_scene(window, bodies, shapes, input_info, sim_info);
+
+	// array that will work as our state switch
 	Scene* scenes[] = {&setup_scene, &setup_circle_scene, &setup_uniform_scene, &setup_normal_scene, &setup_custom_scene, &sim_scene};
 
 	// main loop
