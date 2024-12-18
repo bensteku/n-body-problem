@@ -24,7 +24,7 @@ int main(int argc, char* argv[])
 	sf::RenderWindow window(sf::VideoMode(settings::window_width, settings::window_height), "n body problem");
 	window.setFramerateLimit(settings::frame_rate_cap);
 
-	#ifdef THREED
+#ifdef THREED
 	// initialize GLEW
 	GLenum err = glewInit();
 	if (err != GLEW_OK) {
@@ -35,7 +35,7 @@ int main(int argc, char* argv[])
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_BACK);
 	glViewport(0, 0, settings::window_width, settings::window_height);
-	#endif
+#endif
 
 	// body structs holding the info for the simulation
 	std::vector<body> bodies;
@@ -68,11 +68,11 @@ int main(int argc, char* argv[])
 	{
 		State state_before = scenes[input_info.program_state]->process_inputs();
 
-		#ifdef THREED
+	#ifdef THREED
 		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-		#else
+	#else
 		window.clear();
-		#endif
+	#endif
 		scenes[input_info.program_state]->render(state_before);
 		window.display();
 	}

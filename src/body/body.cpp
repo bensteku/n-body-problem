@@ -166,8 +166,7 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 	const size_t num_packed_elements = x_vec.size();
 	const size_t num_elements_over = num_packed_elements * 8 - num_elements;
 
-	// init registers (maybe move this outside so this is only done once)
-	// single and tmp registers for the element the iteration is currently at
+	// registers for constants
 	const __m256 g_reg = _mm256_set_ps(ss.g, ss.g, ss.g, ss.g, ss.g, ss.g, ss.g, ss.g);	
 	const __m256 delta_t_reg = _mm256_set_ps(ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep);
 	
@@ -319,7 +318,6 @@ void process_bodies_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::u
 	size_t interactions_per_thread;
 	size_t bodies_per_thread;  // for the velocity calculation
 
-
 	while (!terminate)
 	{
 		// mutex and condition variable guard to ensure that the threads don't do anything as long as the simulation isn't running
@@ -339,6 +337,7 @@ void process_bodies_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::u
 				bodies_per_thread = std::ceil(static_cast<float>(bodies.size()) / num_threads);
 				size_t first_interaction_id = thread_id * interactions_per_thread;
 				size_t counter = 0;
+				last_size = bodies.size();
 				bool found = false;
 				for (size_t i = 0; i < bodies.size() - 1; i++)
 				{
@@ -421,6 +420,200 @@ void process_bodies_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::u
 		}
 	}
 	
+}
+
+void process_bodies_simd_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier,
+							std::atomic<bool>& terminate, bool& run,
+							std::condition_variable& run_cv, std::mutex& run_mtx,
+							size_t thread_id, size_t num_threads,
+							std::vector<body>& bodies, sim_settings& ss,
+							std::vector<__m256>& x_vec, std::vector<__m256>& y_vec, std::vector<__m256>& mass_vec, std::vector<__m256>& r_vec)
+{
+
+	// store last bodies size in order to avoid having to continually recalculate the work indices if nothing has changed
+	size_t last_size = 0;
+	size_t num_elements_over;
+	size_t num_packed_elements;
+	size_t num_packed_elements_per_thread, num_elements_per_thread;
+	size_t packed_start_idx, body_start_idx;
+	size_t bodies_per_thread;  // for the velocity calculation
+	
+	// declare all the registers
+	__m256 nan_check_reg;
+	__m256 size_check_reg;
+	__m256 mass_it_reg;
+	__m256 x_it_reg;
+	__m256 y_it_reg;
+	__m256 r_it_reg;
+	__m256 r_add_it_reg;
+	__m256 dx_reg;
+	__m256 dx_squ_reg;
+	__m256 dy_reg;
+	__m256 dy_squ_reg;
+	__m256 dist_reg;
+	__m256 force_reg;
+	__m256 vel_reg;
+	__m256 g_reg;
+	__m256 delta_t_reg;
+
+	while (!terminate)
+	{
+		// mutex and condition variable guard to ensure that the threads don't do anything as long as the simulation isn't running
+		{
+			std::unique_lock<std::mutex> lock(run_mtx);
+			run_cv.wait(lock, [&run] {return run; });
+		}
+
+		// pre-work section
+		if (!terminate)
+		{
+			// run calculations that determine which registers this thread will work on
+			if (last_size == 0 || last_size != bodies.size())
+			{
+				last_size = bodies.size();
+				num_packed_elements = x_vec.size();
+				num_elements_over = num_packed_elements * 8 - bodies.size();
+				num_packed_elements_per_thread = std::ceil(static_cast<float>(num_packed_elements) / num_threads);
+				num_elements_per_thread = std::ceil(static_cast<float>(last_size) / num_threads);
+				packed_start_idx = thread_id * num_packed_elements_per_thread;
+				body_start_idx = thread_id * num_elements_per_thread;
+				bodies_per_thread = std::ceil(static_cast<float>(bodies.size()) / num_threads);
+			}
+
+			// registers for constants
+			g_reg = _mm256_set_ps(ss.g, ss.g, ss.g, ss.g, ss.g, ss.g, ss.g, ss.g);
+			delta_t_reg = _mm256_set_ps(ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep, ss.timestep);
+
+			// load current values into the register arrays
+			for (size_t i = packed_start_idx; i < std::min(packed_start_idx + num_packed_elements_per_thread, num_packed_elements); i++)
+			{
+				// array of indices to ensure that we don't access invalid indices in case the bodies array's size is not divisible by 8
+				const size_t indices[8] = { std::min(i * 8, last_size - 1), std::min(i * 8 + 1, last_size - 1), std::min(i * 8 + 2, last_size - 1), std::min(i * 8 + 3, last_size - 1), std::min(i * 8 + 4, last_size - 1), std::min(i * 8 + 5, last_size - 1), std::min(i * 8 + 6, last_size - 1), std::min(i * 8 + 7, last_size - 1) };
+				x_vec[i] = _mm256_set_ps(bodies[indices[7]].x, bodies[indices[6]].x, bodies[indices[5]].x, bodies[indices[4]].x, bodies[indices[3]].x, bodies[indices[2]].x, bodies[indices[1]].x, bodies[indices[0]].x);
+				y_vec[i] = _mm256_set_ps(bodies[indices[7]].y, bodies[indices[6]].y, bodies[indices[5]].y, bodies[indices[4]].y, bodies[indices[3]].y, bodies[indices[2]].y, bodies[indices[1]].y, bodies[indices[0]].y);
+				#ifdef THREED
+				z_vec[i] = _mm256_set_ps(bodies[indices[7]].z, bodies[indices[6]].z, bodies[indices[5]].z, bodies[indices[4]].z, bodies[indices[3]].z, bodies[indices[2]].z, bodies[indices[1]].z, bodies[indices[0]].z);
+				#endif
+				mass_vec[i] = _mm256_set_ps(bodies[indices[7]].m, bodies[indices[6]].m, bodies[indices[5]].m, bodies[indices[4]].m, bodies[indices[3]].m, bodies[indices[2]].m, bodies[indices[1]].m, bodies[indices[0]].m);
+				r_vec[i] = _mm256_set_ps(bodies[indices[7]].r, bodies[indices[6]].r, bodies[indices[5]].r, bodies[indices[4]].r, bodies[indices[3]].r, bodies[indices[2]].r, bodies[indices[1]].r, bodies[indices[0]].r);
+			}
+		}
+
+		// synchronize threads after loading
+		if (!terminate)
+		{
+			compute_barrier1->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+
+		// start calculations
+		if (!terminate)
+		{
+			for (size_t j = body_start_idx; j < std::min(body_start_idx + num_elements_per_thread, last_size); j++)
+			{
+				// load the current body's values into the tmp registers
+				mass_it_reg = _mm256_set_ps(bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m, bodies[j].m);
+				x_it_reg = _mm256_set_ps(bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x, bodies[j].x);
+				y_it_reg = _mm256_set_ps(bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y, bodies[j].y);
+				r_it_reg = _mm256_set_ps(bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r, bodies[j].r);
+
+				// run the formulas for 8 bodies at a time
+				for (int i = 0; i < num_packed_elements; i++)
+				{
+					// set up mask for nulling out duplicate bodies at the end of the array (only happens if the amount of bodies is not divisible by 8)
+					// I suppose this is not the smartest way of doing this, but I can't be bothered to look up how to do it better
+					if (num_elements_over != 0 and i == num_packed_elements - 1)
+					{
+						float tmp[8] = { 0.0 };
+						for (size_t j = 0; j < 8 - num_elements_over; j++)
+						{
+							tmp[j] = 1.0;
+						}
+						size_check_reg = _mm256_set_ps(tmp[7], tmp[6], tmp[5], tmp[4], tmp[3], tmp[2], tmp[1], tmp[0]);
+					}
+					else
+					{
+						size_check_reg = _mm256_set1_ps(1.0);
+					}
+
+					// distances
+					dx_reg = _mm256_sub_ps(x_it_reg, x_vec[i]);
+					dx_squ_reg = _mm256_mul_ps(dx_reg, dx_reg);
+					dy_reg = _mm256_sub_ps(y_it_reg, y_vec[i]);
+					dy_squ_reg = _mm256_mul_ps(dy_reg, dy_reg);
+					dist_reg = _mm256_add_ps(dx_squ_reg, dy_squ_reg);
+
+					// collision check to avoid NaNs
+					// this will conveniently also zero out all calculations between
+					// the iterator element and its version from the overall array
+					// add up the two radiuses
+					r_add_it_reg = _mm256_add_ps(r_it_reg, r_vec[i]);
+					// square them to make them equivalent to the squared distances above
+					r_add_it_reg = _mm256_mul_ps(r_add_it_reg, r_add_it_reg);
+					// create a mask that is 0 for all body pairs whose distance is smaller than the sum of their radii
+					nan_check_reg = _mm256_cmp_ps(r_add_it_reg, dist_reg, _CMP_LT_OQ);
+
+					// calculate force (using the force register as a tmp as well for the intermediate steps)
+					force_reg = _mm256_mul_ps(mass_it_reg, mass_vec[i]);
+					force_reg = _mm256_mul_ps(force_reg, g_reg);
+					force_reg = _mm256_div_ps(force_reg, dist_reg);
+					// null out all entries based on our mask
+					force_reg = _mm256_and_ps(force_reg, nan_check_reg);
+					// null out values that don't exist (because our last register has more values than are left over in bodies (in case it's not divisible by 8))
+					force_reg = _mm256_mul_ps(force_reg, size_check_reg);
+
+					// get the inverse square root of the distance
+					dist_reg = _mm256_invsqrt_ps(dist_reg);
+					// the inverse square root puts out nans/infs for 0, so we have to deal with that
+					//dist_reg = _mm256_and_ps(dist_reg, _mm256_xor_ps(is_infinity(dist_reg), _mm256_castsi256_ps(_mm256_set1_epi64x(-1))));
+					dist_reg = _mm256_and_ps(dist_reg, nan_check_reg);  // should achieve the same purpose as the line above
+					// normalize the x and y components with it
+					dx_reg = _mm256_mul_ps(dx_reg, dist_reg);
+					dy_reg = _mm256_mul_ps(dy_reg, dist_reg);
+
+					// calculating the velocity
+					// x, for the iterator body
+					vel_reg = _mm256_mul_ps(force_reg, dx_reg);
+					vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
+					dx_reg = _mm256_div_ps(vel_reg, mass_it_reg);  // overwriting the dx_reg, as vel_reg already contains the results we need it for
+					bodies[j].v_x -= reduce_register(dx_reg);
+					// y, for the iterator body
+					vel_reg = _mm256_mul_ps(force_reg, dy_reg);
+					vel_reg = _mm256_mul_ps(vel_reg, delta_t_reg);
+					dy_reg = _mm256_div_ps(vel_reg, mass_it_reg);  // same as above
+					bodies[j].v_y -= reduce_register(dy_reg);
+				}
+				
+				// calculate new position
+				bodies[j].x += 0.5 * bodies[j].v_x * ss.timestep;
+				bodies[j].y += 0.5 * bodies[j].v_y * ss.timestep;
+			}
+		}
+
+		// send signal to main thread
+		if (!terminate)
+		{
+			compute_barrier2->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+
+		// wait until rendering is done
+		if (!terminate)
+		{
+			render_barrier->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+	}
+
 }
 
 #endif

@@ -143,11 +143,11 @@ void SetupSceneCircle::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		#ifdef USE_SIMD
+	#ifdef USE_SIMD
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
-		#endif
+	#endif
 	}
 	// set up bodies in the circle as determined by user inputs
 	init_bodies_circle(m_bodies_ref, m_ss_ref);
@@ -193,11 +193,11 @@ void SetupSceneUniform::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		#ifdef USE_SIMD
+	#ifdef USE_SIMD
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
-		#endif
+	#endif
 	}
 	// set up bodies uniformly random
 	init_bodies_uniform(m_bodies_ref, m_ss_ref);
@@ -244,11 +244,11 @@ void SetupSceneNormal::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		#ifdef USE_SIMD
+	#ifdef USE_SIMD
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
-		#endif
+	#endif
 	}
 	// set up bodies uniformly random
 	init_bodies_normal(m_bodies_ref, m_ss_ref);
@@ -294,11 +294,11 @@ void SetupSceneCustom::render(State state_before)
 		m_previous_size = m_ss_ref.n;
 		m_bodies_ref.resize(m_ss_ref.n);
 		m_shapes_ref.resize(m_ss_ref.n);
-		#ifdef USE_SIMD
+	#ifdef USE_SIMD
 		const size_t num_packed_elements = std::ceil(static_cast<float>(m_ss_ref.n) / 8.0);
 		for (auto& it : m_registers)
 			it.resize(num_packed_elements);
-		#endif
+	#endif
 	}
 
 	update_shapes();
@@ -314,7 +314,7 @@ SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, 
 	Scene(window_ref, bodies_ref, shapes_ref, is_ref, ss_ref)
 {
 	
-	#ifdef USE_THREADS
+#ifdef USE_THREADS
 	size_t num_threads = 16;//std::thread::hardware_concurrency() / 2;
 
 	// uses unique pointer to avoid having to change the constructor's interface or main.cpp in case the USE_THREADS define is true
@@ -325,32 +325,41 @@ SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, 
 	m_threads.resize(num_threads);
 	for (size_t i = 0; i < num_threads; i++)
 	{
-		// (std::unique_ptr<std::barrier<>>& compute_barrier, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads, std::vector<body>& bodies, sim_settings& ss);
+	#ifdef USE_SIMD
+		m_threads[i] = std::thread(process_bodies_simd_mt,
+								   std::ref(m_compute_barrier1), std::ref(m_compute_barrier2), std::ref(m_render_barrier),
+								   std::ref(m_terminate_signal), std::ref(m_run_signal),
+								   std::ref(m_run_cv), std::ref(m_run_mutex),
+								   i, num_threads,
+								   std::ref(m_bodies_ref), std::ref(m_ss_ref),
+								   std::ref(m_registers[0]), std::ref(m_registers[1]), std::ref(m_registers[2]), std::ref(m_registers[3]));
+	#else
 		m_threads[i] = std::thread(process_bodies_mt,
 								   std::ref(m_compute_barrier1), std::ref(m_compute_barrier2), std::ref(m_render_barrier), std::ref(m_terminate_signal), std::ref(m_run_signal),
 								   std::ref(m_run_cv), std::ref(m_run_mutex),
 								   i, num_threads,
 								   std::ref(m_bodies_ref), std::ref(m_ss_ref));
-	}
 	#endif
+	}
+#endif
 
 }
 
 #ifdef USE_THREADS
 
-SimScene::~SimScene()
-{
-
-	// set terminate signal and wake up any sleeping threads so that they can end
-	m_terminate_signal = true;
-	m_compute_barrier2->arrive_and_drop();
-	m_render_barrier->arrive_and_drop();
-	for (std::thread& thread : m_threads)
+	SimScene::~SimScene()
 	{
-		thread.join();
-	}
 
-}
+		// set terminate signal and wake up any sleeping threads so that they can end
+		m_terminate_signal = true;
+		m_compute_barrier2->arrive_and_drop();
+		m_render_barrier->arrive_and_drop();
+		for (std::thread& thread : m_threads)
+		{
+			thread.join();
+		}
+
+	}
 
 #endif
 
@@ -358,13 +367,13 @@ State SimScene::process_inputs()
 {
 
 	process_inputs_sim(m_window_ref, m_is_ref, m_ss_ref);
-	#ifdef USE_THREADS
+#ifdef USE_THREADS
 	// suspend the work in the thread pool when use exits sim
 	if (m_is_ref.program_state != sim)
 	{
 		m_run_signal = false;
 	}
-	#endif
+#endif
 	return sim;
 
 }
@@ -372,7 +381,7 @@ State SimScene::process_inputs()
 void SimScene::render(State state_before)
 {
 
-	#ifdef USE_THREADS
+#ifdef USE_THREADS
 	if (state_before != sim)
 	{
 		{
@@ -381,9 +390,9 @@ void SimScene::render(State state_before)
 		}
 		m_run_cv.notify_all();
 	}
-	#endif
+#endif
 
-	#ifdef USE_CUDA
+#ifdef USE_CUDA
 	// if CUDA is enabled and the user changed the number of bodies or we're going into this method for the first time since setup
 	// we have to reallocate memory for our GPU pointers
 	if (state_before != sim)
@@ -399,21 +408,25 @@ void SimScene::render(State state_before)
 		cudaMemcpy(m_d_bodies, m_bodies_ref.data(), bytes, cudaMemcpyHostToDevice);
 	}
 	process_bodies_cuda(m_bodies_ref, m_d_bodies, m_d_interactions_x, m_d_interactions_y, m_ss_ref);
-	#elif defined(USE_SIMD)
-	process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers[0], m_registers[1], m_registers[2], m_registers[3]);
-	#else
-		#ifdef USE_THREADS
+#elif defined(USE_SIMD)
+	#ifdef USE_THREADS
 		m_compute_barrier2->arrive_and_wait();
-		#else
-		process_bodies(m_bodies_ref, m_ss_ref);
-		#endif
+	#else
+		process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers[0], m_registers[1], m_registers[2], m_registers[3]);
 	#endif
+#else
+	#ifdef USE_THREADS
+		m_compute_barrier2->arrive_and_wait();
+	#else
+		process_bodies(m_bodies_ref, m_ss_ref);
+	#endif
+#endif
 	// update the shapes afterwards
 	update_shapes();
 	// optionally display FPS counter
 	render_fps_info();
-	#ifdef USE_THREADS
+#ifdef USE_THREADS
 	m_render_barrier->arrive_and_wait();
-	#endif
+#endif
 
 }

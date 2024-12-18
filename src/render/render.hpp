@@ -21,13 +21,21 @@ class Scene
 		static inline const std::string m_timestep_str = "Timestep: ";
 		static inline const std::string m_bodies_str = "Number of bodies: ";
 		static inline const std::string m_processing_type =
-		#if defined(USE_CUDA)
+	#if defined(USE_CUDA)
 		"CUDA"
-		#elif defined(USE_SIMD)
-		"SIMD"
+	#elif defined(USE_SIMD)
+		#ifdef USE_THREADS
+			"SIMD (multi-threaded)"
 		#else
-		"SISD"
+			"SIMD"
 		#endif
+	#else
+		#ifdef USE_THREADS
+			"SISD (multi-threaded)"
+		#else
+			"SISD"
+		#endif
+	#endif
 		;
 
 		int m_frame_counter = 1;
@@ -37,10 +45,10 @@ class Scene
 		std::vector<sf::CircleShape>& m_shapes_ref;
 		input_settings& m_is_ref;
 		sim_settings& m_ss_ref;
-		#ifdef USE_SIMD
+	#ifdef USE_SIMD
 		// reference to the vector that will contain our SIMD registers
 		static inline std::array<std::vector<__m256>, 4> m_registers = set_up_simd_registers(settings::n_bodies);
-		#endif
+	#endif
 
 
 		static inline sf::Font m_font;
@@ -150,14 +158,14 @@ class SimScene : public Scene
 
 	private:
 		// if CUDA is used, we create pointers for memory on the GPU
-#		ifdef USE_CUDA
+	#ifdef USE_CUDA
 		body* m_d_bodies;
 		float* m_d_interactions_x;
 		float* m_d_interactions_y;
-#		endif
+	#endif
 
 		// if we run the program multi-threaded, we create a pool of threads to use
-		#ifdef USE_THREADS
+	#ifdef USE_THREADS
 		std::vector<std::thread> m_threads;
 		// have to allocate on heap to avoid changing the constructor's interface
 		std::unique_ptr<std::barrier<>> m_compute_barrier1;
@@ -168,13 +176,13 @@ class SimScene : public Scene
 		bool m_run_signal = false;
 		std::mutex m_run_mutex;
 		std::condition_variable m_run_cv;
-		#endif
+	#endif
 	public:
 		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
-		#ifdef USE_THREADS
+	#ifdef USE_THREADS
 		// only needed in the multi-threaded case to shut the threads safely
 		~SimScene();
-		#endif
+	#endif
 
 		State process_inputs();
 		void render(State state_before);
