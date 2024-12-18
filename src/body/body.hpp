@@ -2,7 +2,18 @@
 
 #include <vector>
 #include <immintrin.h>
+#include <random>
+#include <iostream>
+#include <limits>
+#include <thread>
+#include <barrier>
+#include <condition_variable>
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#endif
 
+#include "../misc/util.hpp"
 #include "../misc/settings.hpp"
 
 #ifndef THREED
@@ -66,3 +77,8 @@ void init_bodies_normal(std::vector<body>& bodies, sim_settings& ss);
 
 void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vector<__m256>& x_vec, std::vector<__m256>& y_vec, std::vector<__m256>& m_vec, std::vector<__m256>& r_vec);
 void process_bodies(std::vector<body>& bodies, sim_settings& ss);
+
+#ifdef USE_THREADS
+// methods when using multi-threading
+void process_bodies_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads, std::vector<body>& bodies, sim_settings& ss);
+#endif

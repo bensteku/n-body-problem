@@ -1,15 +1,5 @@
 #include "body.hpp"
 
-#include <random>
-#include <iostream>
-#include <limits>
-#ifdef USE_CUDA
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#endif
-
-#include "../misc/util.hpp"
-
 /*
 	For initialization, the x-axis will always initially be assumed as ranging from -100 to 100.
 	The y-axis will be cropped according to the aspect ratio.
@@ -313,3 +303,124 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 	}
 
 }
+
+#ifdef USE_THREADS
+
+void process_bodies_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, 
+					   std::atomic<bool>& terminate, bool& run,
+					   std::condition_variable& run_cv, std::mutex& run_mtx,
+					   size_t thread_id, size_t num_threads,
+					   std::vector<body>& bodies, sim_settings& ss)
+{
+	
+	// store last bodies size in order to avoid having to continually recalculate the work indices if nothing has changed
+	size_t last_size = 0;
+	size_t start_body1, start_body2;
+	size_t interactions_per_thread;
+	size_t bodies_per_thread;  // for the velocity calculation
+
+
+	while (!terminate)
+	{
+		// mutex and condition variable guard to ensure that the threads don't do anything as long as the simulation isn't running
+		{
+			std::unique_lock<std::mutex> lock(run_mtx);
+			run_cv.wait(lock, [&run] {return run; });
+		}	
+
+		// work section
+		if (!terminate)
+		{
+			// run calculations that determine which bodies this thread will work on
+			if (last_size == 0 || last_size != bodies.size())
+			{
+				size_t num_interactions = bodies.size() * (bodies.size() - 1) / 2;
+				interactions_per_thread = std::ceil(static_cast<float>(num_interactions) / num_threads);
+				bodies_per_thread = std::ceil(static_cast<float>(bodies.size()) / num_threads);
+				size_t first_interaction_id = thread_id * interactions_per_thread;
+				size_t counter = 0;
+				bool found = false;
+				for (size_t i = 0; i < bodies.size() - 1; i++)
+				{
+					for (size_t j = i + 1; j < bodies.size(); j++)
+					{
+						if (counter == first_interaction_id)
+						{
+							found = true;
+							start_body1 = i;
+							start_body2 = j;
+							break;
+						}
+						counter += 1;
+					}
+					if (found)
+						break;
+				}
+			}
+
+			// start calculations
+			int calculated = 0;
+			size_t body1 = start_body1;
+			size_t body2 = start_body2;
+			while (calculated < interactions_per_thread)
+			{
+				calc_force(bodies[body1], bodies[body2], ss);
+				if (body2 == bodies.size() - 1)
+				{
+					body1 += 1;
+					body2 = body1 + 1;
+				}
+				else
+				{
+					body2 += 1;
+				}
+				if (body1 == bodies.size() - 1)
+				{
+					// when this is the case, this thread has run out of bodies to calculate
+					calculated = interactions_per_thread;
+				}
+				calculated += 1;
+			}
+		}
+
+		// wait for all other threads to finish their gravity calculations
+		if (!terminate)
+		{
+			compute_barrier1->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+
+		// run the velocity calculation in parallel
+		for (size_t idx = thread_id * bodies_per_thread; idx < std::min((thread_id + 1) * bodies_per_thread, bodies.size()); idx++)
+		{
+			bodies[idx].x += 0.5 * bodies[idx].v_x * ss.timestep;
+			bodies[idx].y += 0.5 * bodies[idx].v_y * ss.timestep;
+		}
+
+		// send signal to main thread
+		if (!terminate)
+		{
+			compute_barrier2->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+
+		// wait until rendering is done
+		if (!terminate)
+		{
+			render_barrier->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+	}
+	
+}
+
+#endif

@@ -8,11 +8,11 @@ The release version is the SIMD variant built for Windows x64 systems.
 
 Small FPS benchmark on my system (Ryzen 5950x, RTX3080Ti):
 
-| num. bodies | SISD | SIMD | CUDA |
+| num. bodies | SISD <br> (multi-threaded) | SIMD | CUDA |
 |:-------------:|:------:|:------:|:------:|
-| 80          |   4900   |   4800   |   2700   |
-| 800         |   460   |   790   |   870   |
-| 8000        |   8   |   18   |    92  |
+| 80          |   4900 <br> (3300)  |   4800   |   2700   |
+| 800         |   460 <br> (570)  |   790   |   870   |
+| 8000        |   8 <br> (20)  |   18   |    92  |
 
 | num. bodies @ 30 FPS | SISD | SIMD | CUDA |
 |:-------------:|:------:|:------:|:------:|

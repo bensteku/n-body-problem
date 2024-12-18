@@ -3,6 +3,8 @@
 #include <vector>
 #include <array>
 #include <string>
+#include <thread>
+#include <barrier>
 #include <SFML/Graphics.hpp>
 
 #include "../body/body.hpp"
@@ -153,8 +155,26 @@ class SimScene : public Scene
 		float* m_d_interactions_x;
 		float* m_d_interactions_y;
 #		endif
+
+		// if we run the program multi-threaded, we create a pool of threads to use
+		#ifdef USE_THREADS
+		std::vector<std::thread> m_threads;
+		// have to allocate on heap to avoid changing the constructor's interface
+		std::unique_ptr<std::barrier<>> m_compute_barrier1;
+		std::unique_ptr<std::barrier<>> m_compute_barrier2;
+		std::unique_ptr<std::barrier<>> m_render_barrier;
+		// sychronization helpers
+		std::atomic<bool> m_terminate_signal = false;
+		bool m_run_signal = false;
+		std::mutex m_run_mutex;
+		std::condition_variable m_run_cv;
+		#endif
 	public:
 		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
+		#ifdef USE_THREADS
+		// only needed in the multi-threaded case to shut the threads safely
+		~SimScene();
+		#endif
 
 		State process_inputs();
 		void render(State state_before);
