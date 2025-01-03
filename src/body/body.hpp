@@ -68,7 +68,7 @@ struct sim_settings
 	float max_mass = 2000;
 	float min_mass = 2000;
 #ifdef USE_OCTREE
-	size_t octree_max_node_size = 20;
+	size_t octree_max_node_size = 32;
 	float octree_tolerance = 0.5;
 #endif
 
@@ -141,7 +141,7 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss);
 
 		void build(std::vector<body>& start_bodies, sim_settings& ss);
 	#ifdef USE_SIMD
-		void calc_force_simd();
+		void calc_force_simd(body& test_body, sim_settings& ss);
 	#elif defined(USE_CUDA)
 
 	#else

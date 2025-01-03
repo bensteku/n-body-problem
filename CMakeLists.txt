@@ -24,7 +24,6 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OCTREE) # temporary
 # Check for custom build variants
 if (BUILD_VARIANT STREQUAL "SIMD")
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SIMD)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_THREADS)
     message(STATUS "Building with SIMD support")
 elseif (BUILD_VARIANT STREQUAL "CUDA")
     enable_language(CUDA)
