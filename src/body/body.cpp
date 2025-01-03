@@ -286,7 +286,52 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 
 void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 {
-	
+#ifdef USE_OCTREE
+	// get min max of current bodies
+	float min_x = FLT_MAX;
+	float max_x = -FLT_MAX;
+	float min_y = FLT_MAX;
+	float max_y = -FLT_MAX;
+	#ifdef THREED
+		float min_z = FLT_MAX;
+		float max_z = -FLT_MAX;
+	#endif
+	for (const body& it : bodies)
+	{
+		if (it.x > max_x) max_x = it.x;
+		if (it.x < min_x) min_x = it.x;
+		if (it.y > max_y) max_y = it.y;
+		if (it.y < min_y) min_y = it.y;
+	#ifdef THREED
+		if (it.z > max_z) max_z = it.z;
+		if (it.z < min_z) min_z = it.z;
+	#endif
+	}
+	#ifndef THREED
+		float size = std::max(max_x - min_x, max_y - min_y) + 0.005;
+	#else
+		float size = std::max(max_x - min_x, max_y - min_y, max_z - min_z);
+	#endif
+
+	// create octree that is adapted to the current simulation space
+	octree* it_octree = 
+	#ifndef THREED
+		new octree(min_x + (max_x - min_x) / 2, min_y + (max_y - min_y) / 2, size, ss.octree_max_node_size);
+	#else
+		new octree(min_x + (max_x - min_x) / 2, min_y + (max_y - min_y) / 2, min_z + (max_z - min_z) / 2, size, ss.octree_max_node_size);
+	#endif
+	it_octree->build(bodies, ss);
+
+	// run calculations
+	for (body& it : bodies)
+	{
+		it_octree->calc_force(it, ss);
+	}
+
+	// destroy octree
+	delete it_octree;
+
+#else
 	for (auto it = bodies.begin(); it != bodies.end() - 1; it++)
 	{
 		for (auto it2 = it + 1; it2 != bodies.end(); it2++)
@@ -294,6 +339,7 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 			calc_force(*it, *it2, ss);
 		}
 	}
+#endif
 	
 	for (body& it : bodies)
 	{
@@ -612,6 +658,167 @@ void process_bodies_simd_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, s
 		{
 			break;
 		}
+	}
+
+}
+
+#endif
+
+#ifdef USE_OCTREE
+
+void octree::build(std::vector<body>& start_bodies, sim_settings& ss)
+{
+
+	for (const body& it : start_bodies)
+	{
+		bodies.push_back(&it);
+	}
+	subdivide(ss);
+	update_com();
+
+}
+
+void octree::calc_force(body& test_body, sim_settings& ss)
+{
+	
+	if (is_leaf && bodies.size() == 0)
+	{
+		return;
+	}
+	float d_x = test_body.x - com_x;
+	float d_y = test_body.y - com_y;
+
+#ifndef THREED
+	float dist = d_x * d_x + d_y * d_y;
+#else
+	float d_z = test_body.z - com_z;
+	float dist = d_x * d_x + d_y * d_y + d_z * d_z;
+#endif
+	
+	float dist_inv = rsqrt(dist);
+
+	// calculate force either with the current com or all child coms
+	if (dist_inv * size < ss.octree_tolerance || is_leaf )
+	{
+		// early exit if the body is too near the com to prevent inf and nan values
+		if (test_body.r * test_body.r >= dist) return;
+		float force = -(m * ss.g) / dist;
+		d_x *= dist_inv;
+		test_body.v_x += d_x * force * ss.timestep;
+		d_y *= dist_inv;
+		test_body.v_y += d_y * force * ss.timestep;
+	#ifdef THREED
+		d_z *= dist_inv;
+		test_body.v_z += d_z * force * ss.timestep;
+	#endif
+	}
+	else
+	{
+		for (octree*& child : children)
+		{
+			child->calc_force(test_body, ss);
+		}
+	}
+
+}
+
+void octree::subdivide(sim_settings& ss)
+{
+
+	// if there is enough space here, then this is a leaf node in the octree
+	if (bodies.size() <= max_occupancy)
+	{
+		is_leaf = true;
+		return;
+	}
+	// otherwise, distribute bodies to child nodes
+	else
+	{
+	#ifndef THREED
+		children[0] = new octree(c_x - size / 4, c_y + size / 4, size / 2, ss.octree_max_node_size);
+		children[1] = new octree(c_x + size / 4, c_y + size / 4, size / 2, ss.octree_max_node_size);
+		children[2] = new octree(c_x - size / 4, c_y - size / 4, size / 2, ss.octree_max_node_size);
+		children[3] = new octree(c_x + size / 4, c_y - size / 4, size / 2, ss.octree_max_node_size);
+	#else
+		children[0] = new octree(c_x - size / 2, c_y + size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
+		children[1] = new octree(c_x + size / 2, c_y + size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
+		children[2] = new octree(c_x - size / 2, c_y - size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
+		children[3] = new octree(c_x + size / 2, c_y - size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
+		children[4] = new octree(c_x - size / 2, c_y + size / 2, c_z + size / 2, size / 2, ss.octree_max_node_size);
+		children[5] = new octree(c_x + size / 2, c_y + size / 2, c_z + size / 2, size / 2, ss.octree_max_node_size);
+		children[6] = new octree(c_x - size / 2, c_y - size / 2, c_z + size / 2, size / 2, ss.octree_max_node_size);
+		children[7] = new octree(c_x + size / 2, c_y - size / 2, c_z + size / 2, size / 2, ss.octree_max_node_size);
+	#endif
+		for (const body*& it : bodies)
+		{
+			for (octree*& child : children)
+			{
+				if (child->in_bounds(it))
+				{
+					child->bodies.push_back(it);
+					break;
+				}
+			}
+		}
+		bodies.clear();
+		for (octree*& child : children)
+		{
+			child->subdivide(ss);
+		}
+		is_leaf = false;
+	}
+
+}
+
+bool octree::in_bounds(const body* test_body) const
+{
+
+	// the 1e-3 here is a fudge factor to make sure that no bodies slip the net
+	float box = size / 2;
+	if (test_body->x >= c_x + box + 1e-3 || test_body->x < c_x - box - 1e-3) return false;
+	if (test_body->y >= c_y + box + 1e-3 || test_body->y < c_y - box - 1e-3) return false;
+#ifdef THREED
+	if (test_body->x > c_x + box + 1e-3 || test_body->x < c_x - box - 1e-3) return false;
+#endif
+	return true;
+
+}
+
+void octree::update_com()
+{
+
+	com_x = 0;
+	com_y = 0;
+	m = 0;
+	if (is_leaf)
+	{
+		if (bodies.size() == 0)
+		{
+			com_x = c_x;
+			com_y = c_y;
+			return;
+		}
+		for (const body* it : bodies)
+		{
+			com_x += it->x * it->m;
+			com_y += it->y * it->m;
+			m += it->m;
+		}
+	}
+	else
+	{
+		for (octree*& it : children)
+		{
+			it->update_com();
+			com_x += it->com_x * it->m;
+			com_y += it->com_y * it->m;
+			m += it->m;
+		}
+	}
+	if (m != 0)
+	{
+		com_x /= m;
+		com_y /= m;
 	}
 
 }

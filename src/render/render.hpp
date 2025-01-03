@@ -13,6 +13,30 @@
 
 std::vector<sf::CircleShape> init_shapes(const std::vector<body>& bodies);
 
+const std::string ui_string1 =
+	#ifdef USE_CUDA
+		"CUDA";
+	#elif defined(USE_SIMD)
+		"SIMD";
+	#else
+		"SISD";
+	#endif
+
+
+const std::string ui_string2 =
+	#ifdef USE_THREADS
+		" (multi-threaded)";
+	#else
+		"";
+	#endif
+
+const std::string ui_string3 =
+	#ifdef USE_OCTREE
+		" (Octree)";
+	#else
+		"";
+	#endif
+
 class Scene
 {
 	private:
@@ -20,23 +44,11 @@ class Scene
 		static inline const std::string m_gravity_str = "Gravity: ";
 		static inline const std::string m_timestep_str = "Timestep: ";
 		static inline const std::string m_bodies_str = "Number of bodies: ";
-		static inline const std::string m_processing_type =
-	#if defined(USE_CUDA)
-		"CUDA"
-	#elif defined(USE_SIMD)
-		#ifdef USE_THREADS
-			"SIMD (multi-threaded)"
-		#else
-			"SIMD"
-		#endif
-	#else
-		#ifdef USE_THREADS
-			"SISD (multi-threaded)"
-		#else
-			"SISD"
-		#endif
+	#ifdef USE_OCTREE
+		static inline const std::string m_octree_str1 = "Octree Node Size: ";
+		static inline const std::string m_octree_str2 = "Octree Node Tolerance: ";
 	#endif
-		;
+		static inline const std::string m_processing_type = ui_string1 + ui_string2 + ui_string3;
 
 		int m_frame_counter = 1;
 	protected:

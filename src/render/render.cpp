@@ -67,7 +67,12 @@ void Scene::render_fps_info()
 				m_processing_type + "\n" +
 				m_gravity_str + std::to_string(m_ss_ref.g) + "\n" +
 				m_timestep_str + std::to_string(m_ss_ref.timestep) + "\n" +
-				m_bodies_str + std::to_string(m_ss_ref.n));
+				m_bodies_str + std::to_string(m_ss_ref.n)
+			#ifdef USE_OCTREE
+				+ "\n" + m_octree_str1 + std::to_string(m_ss_ref.octree_max_node_size)
+				+ "\n" + m_octree_str2 + std::to_string(m_ss_ref.octree_tolerance)
+			#endif
+			);
 			m_clock.restart();
 			m_frame_counter = 1;
 		}

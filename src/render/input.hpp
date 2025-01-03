@@ -40,6 +40,10 @@ struct input_settings
 	bool n_pressed = false;
 	bool b_pressed = false;
 	bool c_pressed = false;
+#ifdef USE_OCTREE
+	bool o_pressed = false;
+	bool p_pressed = false;
+#endif
 	// toggle for showing fps
 	bool f_toggle = false;
 	// storage for new bodies in custom mode
@@ -59,6 +63,21 @@ inline void process_inputs_sim(sf::RenderWindow& window, input_settings& is, sim
 				window.close();
 				break;
 			case sf::Event::MouseWheelMoved:
+			#ifdef USE_OCTREE
+				if (is.o_pressed)
+				{
+					if (event.mouseWheel.delta >= 0)
+						ss.octree_max_node_size = std::max(ss.octree_max_node_size + 1, (size_t)(ss.octree_max_node_size * 1.1));
+					else
+						ss.octree_max_node_size = std::max((size_t)0, std::min(ss.octree_max_node_size - 1, (size_t)(ss.octree_max_node_size * 0.9)));
+					return;
+				}
+				else if (is.p_pressed)
+				{
+					ss.octree_tolerance = std::max(0.0, ss.octree_tolerance + 0.01 * event.mouseWheel.delta);
+					return;
+				}
+			#endif
 				is.zoom *= 1 - ((0.05 + (int)is.ctrl_pressed * settings::zoom_modifier) * event.mouseWheel.delta);
 				break;
 			case sf::Event::MouseButtonPressed:
@@ -90,51 +109,70 @@ inline void process_inputs_sim(sf::RenderWindow& window, input_settings& is, sim
 			case sf::Event::KeyPressed:
 				switch (event.key.scancode)
 				{
-				case sf::Keyboard::Scan::R:
-					is.zoom = 1.0;
-					is.center_x = 0;
-					is.center_y = 0;
-					break;
-				case sf::Keyboard::Scan::LControl:
-					is.ctrl_pressed = true;
-					break;
-				case sf::Keyboard::Scan::F:
-					is.f_toggle = !is.f_toggle;
-					break;
-				case sf::Keyboard::Scan::NumpadPlus:
-					if (is.ctrl_pressed)
-						ss.timestep *= 1.1;
-					else
-						ss.g *= 1.1;
-					break;
-				case sf::Keyboard::Scan::NumpadMinus:
-					if (is.ctrl_pressed)
-						ss.timestep *= 0.9;
-					else
-						ss.g *= 0.9;
-					break;
-				case sf::Keyboard::Scan::S:
-					ss.g *= -1;
-					break;
-				case sf::Keyboard::Scan::T:
-					is.program_state = setup;
-					// resetting the settings struct to default
-					// in case it was overwritten by user interaction
-					ss.max_mass = 2000;
-					ss.min_mass = 2000;
-					ss.x_range = 25;
-					ss.y_range = 25;
-					break;
-				default:
-					break;
+					case sf::Keyboard::Scan::R:
+						is.zoom = 1.0;
+						is.center_x = 0;
+						is.center_y = 0;
+						break;
+					case sf::Keyboard::Scan::LControl:
+						is.ctrl_pressed = true;
+						break;
+					case sf::Keyboard::Scan::F:
+						is.f_toggle = !is.f_toggle;
+						break;
+					case sf::Keyboard::Scan::NumpadPlus:
+						if (is.ctrl_pressed)
+							ss.timestep *= 1.1;
+						else
+							ss.g *= 1.1;
+						break;
+					case sf::Keyboard::Scan::NumpadMinus:
+						if (is.ctrl_pressed)
+							ss.timestep *= 0.9;
+						else
+							ss.g *= 0.9;
+						break;
+					case sf::Keyboard::Scan::S:
+						ss.g *= -1;
+						break;
+					case sf::Keyboard::Scan::T:
+						is.program_state = setup;
+						// resetting the settings struct to default
+						// in case it was overwritten by user interaction
+						ss.max_mass = 2000;
+						ss.min_mass = 2000;
+						ss.x_range = 25;
+						ss.y_range = 25;
+						break;
+				#ifdef USE_OCTREE
+					case sf::Keyboard::Scan::O:
+						is.o_pressed = true;
+						break;
+					case sf::Keyboard::Scan::P:
+						is.p_pressed = true;
+						break;
+				#endif
+					default:
+						break;
 				}
 				break;
 			case sf::Event::KeyReleased:
-				if (event.key.scancode == sf::Keyboard::Scan::LControl)
+				switch (event.key.scancode)
 				{
-					is.ctrl_pressed = false;
+					case sf::Keyboard::Scan::LControl:
+						is.ctrl_pressed = false;
+						break;
+				#ifdef USE_OCTREE
+					case sf::Keyboard::Scan::O:
+						is.o_pressed = false;
+						break;
+					case sf::Keyboard::Scan::P:
+						is.p_pressed = false;
+						break;
+				#endif
+					default:
+						break;
 				}
-				break;
 		}
 	}
 
