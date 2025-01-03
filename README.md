@@ -13,7 +13,7 @@ Small FPS benchmark on my system (Ryzen 5950x, RTX3080Ti):
 | num. bodies | SISD <br> (multi-threaded) <br> (Octree) <br> (both) | SIMD <br> (multi-threaded) <br> (Octree) | CUDA |
 |:-------------:|:------:|:------:|:------:|
 | 80          |   4900 <br> (3300) <br> (4500)  |   4800 <br> (3400)   |   2700   |
-| 800         |   460 <br> (530) <br> (850) |   790 <br> (900)  |   870   |
+| 800         |   460 <br> (530) <br> (800) |   790 <br> (900)  |   870   |
 | 8000        |   8 <br> (20) <br> (60) |   18 <br> (55)  |    92  |
 
 | num. bodies @ 30 FPS | SISD | SIMD | CUDA |
@@ -33,7 +33,7 @@ The setup provides onscreen instructions. During simulation:
 - pressing Numpad+/- (+ L-CTRL) increases/decreases gravity (the timestep)
 - pressing S flips gravity around
 - pressing T sends you back to the setup menu
-- in the Octree version, holding O/P and scrolling the mouse wheel will change the maxmimum node size/tolerance of the Octree
+- in the Octree version, holding O/P and scrolling the mouse wheel will change the maximum node size/tolerance of the Octree
 
 ## Acknowledgements
 

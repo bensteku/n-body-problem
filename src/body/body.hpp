@@ -140,7 +140,13 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss);
 		}
 
 		void build(std::vector<body>& start_bodies, sim_settings& ss);
+	#ifdef USE_SIMD
+		void calc_force_simd();
+	#elif defined(USE_CUDA)
+
+	#else
 		void calc_force(body& test_body, sim_settings& ss);
+	#endif
 
 		private:
 			void subdivide(sim_settings& ss);

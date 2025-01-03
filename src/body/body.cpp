@@ -117,12 +117,12 @@ void calc_force(body& body1, body& body2, sim_settings& ss)
 	float d_x = body1.x - body2.x;
 	float d_y = body1.y - body2.y;
 
-	#ifndef THREED
+#ifndef THREED
 	float dist = d_x * d_x + d_y * d_y;  // no square root needed here because the formula for the force squares it anyway
-	#else
+#else
 	float d_z = body1.z - body2.z;
 	float dist = d_x * d_x + d_y * d_y + d_z * d_z;
-	#endif
+#endif
 
 	float force;
 	if ((body1.r + body2.r) * (body1.r + body2.r) >= dist)
@@ -151,11 +151,11 @@ void calc_force(body& body1, body& body2, sim_settings& ss)
 	body1.v_y += d_y * force * ss.timestep / body1.m;
 	body2.v_y -= d_y * force * ss.timestep / body2.m;
 
-	#ifdef THREED
+#ifdef THREED
 	// same for z
 	body1.v_z += d_z * force * ss.timestep / body1.m;
 	body1.v_z -= d_z * force * ss.timestep / body2.m;
-	#endif
+#endif
 
 }
 
@@ -666,6 +666,10 @@ void process_bodies_simd_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, s
 
 #ifdef USE_OCTREE
 
+/*
+	functions that implement an octree for the problem
+*/
+
 void octree::build(std::vector<body>& start_bodies, sim_settings& ss)
 {
 
@@ -685,38 +689,74 @@ void octree::calc_force(body& test_body, sim_settings& ss)
 	{
 		return;
 	}
-	float d_x = test_body.x - com_x;
-	float d_y = test_body.y - com_y;
 
-#ifndef THREED
-	float dist = d_x * d_x + d_y * d_y;
-#else
-	float d_z = test_body.z - com_z;
-	float dist = d_x * d_x + d_y * d_y + d_z * d_z;
-#endif
-	
-	float dist_inv = rsqrt(dist);
-
-	// calculate force either with the current com or all child coms
-	if (dist_inv * size < ss.octree_tolerance || is_leaf )
+	// if this node is a leaf and the test body is in its domain, we run the calculation as normal
+	// i.e. the O^2 algorithm
+	if (is_leaf && in_bounds(&test_body))
 	{
-		// early exit if the body is too near the com to prevent inf and nan values
-		if (test_body.r * test_body.r >= dist) return;
-		float force = -(m * ss.g) / dist;
-		d_x *= dist_inv;
-		test_body.v_x += d_x * force * ss.timestep;
-		d_y *= dist_inv;
-		test_body.v_y += d_y * force * ss.timestep;
-	#ifdef THREED
-		d_z *= dist_inv;
-		test_body.v_z += d_z * force * ss.timestep;
-	#endif
+		for (const body*& it : bodies)
+		{
+			float d_x = test_body.x - it->x;
+			float d_y = test_body.y - it->y;
+			
+		#ifndef THREED
+			float dist = d_x * d_x + d_y * d_y;
+		#else
+			float d_z = test_body.z - it->z;
+			float dist = d_x * d_x + d_y * d_y + d_z * d_z;
+		#endif
+			float dist_inv = rsqrt(dist);
+
+			if (test_body.r * test_body.r + it->r * it->r >= dist)
+				break;
+
+			float force = -(it->m * ss.g) / dist;
+			d_x *= dist_inv;
+			test_body.v_x += d_x * force * ss.timestep;
+			d_y *= dist_inv;
+			test_body.v_y += d_y * force * ss.timestep;
+		#ifdef THREED
+			d_z *= dist_inv;
+			test_body.v_z += d_z * force * ss.timestep;
+		#endif 
+		}
 	}
+	// otherwise we run the octree comparison and do a simplified calculation with the center of mass
 	else
 	{
-		for (octree*& child : children)
+		float d_x = test_body.x - com_x;
+		float d_y = test_body.y - com_y;
+
+	#ifndef THREED
+		float dist = d_x * d_x + d_y * d_y;
+	#else
+		float d_z = test_body.z - com_z;
+		float dist = d_x * d_x + d_y * d_y + d_z * d_z;
+	#endif
+
+		float dist_inv = rsqrt(dist);
+
+		// calculate force either with the current com or all child coms
+		if (dist_inv * size < ss.octree_tolerance)
 		{
-			child->calc_force(test_body, ss);
+			// early exit if the body is too near the com to prevent inf and nan values
+			if (test_body.r * test_body.r >= dist) return;
+			float force = -(m * ss.g) / dist;
+			d_x *= dist_inv;
+			test_body.v_x += d_x * force * ss.timestep;
+			d_y *= dist_inv;
+			test_body.v_y += d_y * force * ss.timestep;
+	#ifdef THREED
+			d_z *= dist_inv;
+			test_body.v_z += d_z * force * ss.timestep;
+	#endif
+		}
+		else if (!is_leaf)
+		{
+			for (octree*& child : children)
+			{
+				child->calc_force(test_body, ss);
+			}
 		}
 	}
 
