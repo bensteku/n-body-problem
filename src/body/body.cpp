@@ -292,40 +292,10 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 
 void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 {
-#ifdef USE_OCTREE
-	// get min max of current bodies
-	float min_x = FLT_MAX;
-	float max_x = -FLT_MAX;
-	float min_y = FLT_MAX;
-	float max_y = -FLT_MAX;
-	#ifdef THREED
-		float min_z = FLT_MAX;
-		float max_z = -FLT_MAX;
-	#endif
-	for (const body& it : bodies)
-	{
-		if (it.x > max_x) max_x = it.x;
-		if (it.x < min_x) min_x = it.x;
-		if (it.y > max_y) max_y = it.y;
-		if (it.y < min_y) min_y = it.y;
-	#ifdef THREED
-		if (it.z > max_z) max_z = it.z;
-		if (it.z < min_z) min_z = it.z;
-	#endif
-	}
-	#ifndef THREED
-		float size = std::max(max_x - min_x, max_y - min_y) + 0.005;
-	#else
-		float size = std::max(max_x - min_x, max_y - min_y, max_z - min_z);
-	#endif
 
+#ifdef USE_OCTREE
 	// create octree that is adapted to the current simulation space
-	octree* it_octree = 
-	#ifndef THREED
-		new octree(min_x + (max_x - min_x) / 2, min_y + (max_y - min_y) / 2, size, ss.octree_max_node_size);
-	#else
-		new octree(min_x + (max_x - min_x) / 2, min_y + (max_y - min_y) / 2, min_z + (max_z - min_z) / 2, size, ss.octree_max_node_size);
-	#endif
+	octree* it_octree = new octree();
 	it_octree->build(bodies, ss);
 
 	// run calculations
@@ -683,6 +653,36 @@ void process_bodies_simd_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, s
 void octree::build(std::vector<body>& start_bodies, sim_settings& ss)
 {
 
+	// this function only gets called on an octree that is the root of the tree
+	// thus we need to calculate a fitting size parameter and center points
+	float min_x = FLT_MAX;
+	float max_x = -FLT_MAX;
+	float min_y = FLT_MAX;
+	float max_y = -FLT_MAX;
+#ifdef THREED
+	float min_z = FLT_MAX;
+	float max_z = -FLT_MAX;
+#endif
+	for (const body& it : start_bodies)
+	{
+		if (it.x > max_x) max_x = it.x;
+		if (it.x < min_x) min_x = it.x;
+		if (it.y > max_y) max_y = it.y;
+		if (it.y < min_y) min_y = it.y;
+	#ifdef THREED
+		if (it.z > max_z) max_z = it.z;
+		if (it.z < min_z) min_z = it.z;
+	#endif
+	}
+	// + 0.005 is a fudge factor
+	c_x = min_x + (max_x - min_x) / 2;
+	c_y = min_y + (max_y - min_y) / 2;
+#ifndef THREED
+	size = std::max(max_x - min_x, max_y - min_y) + 0.005;
+#else
+	size = std::max(max_x - min_x, max_y - min_y, max_z - min_z) + 0.005;
+	c_z = min_z + (max_z - min_z) / 2;
+#endif
 	for (const body& it : start_bodies)
 	{
 		bodies.push_back(&it);
@@ -927,11 +927,107 @@ void octree::calc_force(body& test_body, sim_settings& ss)
 }
 #endif
 
+// multi threaded octree methods
+#ifdef USE_THREADS
+#ifdef USE_CUDA
+
+#elif defined(USE_SIMD)
+
+#else
+void octree_calc_force_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, 
+						   std::unique_ptr<std::barrier<>>& compute_barrier2, 
+						   std::unique_ptr<std::barrier<>>& render_barrier, 
+						   std::atomic<bool>& terminate, 
+						   bool& run, 
+						   std::condition_variable& run_cv, 
+						   std::mutex& run_mtx, 
+						   size_t thread_id, 
+						   size_t num_threads, 
+						   std::vector<body>& bodies, 
+						   std::unique_ptr<octree>& shared_octree, 
+						   sim_settings& ss)
+{
+
+	// store last bodies size in order to avoid having to continually recalculate the work indices if nothing has changed
+	size_t last_size = 0;
+	size_t start_body1, start_body2;
+	size_t bodies_per_thread;  // for the velocity calculation
+
+	while (!terminate)
+	{
+		// mutex and condition variable guard to ensure that the threads don't do anything as long as the simulation isn't running
+		{
+			std::unique_lock<std::mutex> lock(run_mtx);
+			run_cv.wait(lock, [&run] {return run; });
+		}
+
+		// work section
+		if (!terminate)
+		{
+			// run calculations that determine which bodies this thread will work on
+			if (last_size == 0 || last_size != bodies.size())
+			{
+				bodies_per_thread = std::ceil(static_cast<float>(bodies.size()) / num_threads);
+				last_size = bodies.size();
+			}
+
+			// start calculations
+			size_t it_idx = thread_id * bodies_per_thread;
+			size_t end_idx = std::min(it_idx + bodies_per_thread, last_size);
+			while (it_idx < end_idx)
+			{
+				shared_octree->calc_force(bodies[it_idx], ss);
+				it_idx += 1;
+			}
+		}
+
+		// wait for all other threads to finish their gravity calculations
+		if (!terminate)
+		{
+			compute_barrier1->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+
+		// run the velocity calculation in parallel
+		for (size_t idx = thread_id * bodies_per_thread; idx < std::min((thread_id + 1) * bodies_per_thread, last_size); idx++)
+		{
+			bodies[idx].x += 0.5 * bodies[idx].v_x * ss.timestep;
+			bodies[idx].y += 0.5 * bodies[idx].v_y * ss.timestep;
+		}
+
+		// send signal to main thread
+		if (!terminate)
+		{
+			compute_barrier2->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+
+		// wait until rendering is done
+		if (!terminate)
+		{
+			render_barrier->arrive_and_wait();
+		}
+		else
+		{
+			break;
+		}
+	}
+
+}
+#endif
+#endif
+
 void octree::subdivide(sim_settings& ss)
 {
 
 	// if there is enough space here, then this is a leaf node in the octree
-	if (bodies.size() <= max_occupancy)
+	if (bodies.size() <= ss.octree_max_node_size)
 	{
 		is_leaf = true;
 		return;
@@ -940,10 +1036,10 @@ void octree::subdivide(sim_settings& ss)
 	else
 	{
 	#ifndef THREED
-		children[0] = new octree(c_x - size / 4, c_y + size / 4, size / 2, ss.octree_max_node_size);
-		children[1] = new octree(c_x + size / 4, c_y + size / 4, size / 2, ss.octree_max_node_size);
-		children[2] = new octree(c_x - size / 4, c_y - size / 4, size / 2, ss.octree_max_node_size);
-		children[3] = new octree(c_x + size / 4, c_y - size / 4, size / 2, ss.octree_max_node_size);
+		children[0] = new octree(c_x - size / 4, c_y + size / 4, size / 2);
+		children[1] = new octree(c_x + size / 4, c_y + size / 4, size / 2);
+		children[2] = new octree(c_x - size / 4, c_y - size / 4, size / 2);
+		children[3] = new octree(c_x + size / 4, c_y - size / 4, size / 2);
 	#else
 		children[0] = new octree(c_x - size / 2, c_y + size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
 		children[1] = new octree(c_x + size / 2, c_y + size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);

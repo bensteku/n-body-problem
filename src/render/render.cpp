@@ -326,6 +326,9 @@ SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, 
 	m_compute_barrier1 = std::make_unique<std::barrier<>>(num_threads);
 	m_compute_barrier2 = std::make_unique<std::barrier<>>(num_threads + 1);
 	m_render_barrier = std::make_unique<std::barrier<>>(num_threads + 1);
+	#ifdef USE_OCTREE
+		m_shared_octree = std::make_unique<octree>();
+	#endif
 
 	m_threads.resize(num_threads);
 	for (size_t i = 0; i < num_threads; i++)
@@ -339,11 +342,19 @@ SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, 
 								   std::ref(m_bodies_ref), std::ref(m_ss_ref),
 								   std::ref(m_registers[0]), std::ref(m_registers[1]), std::ref(m_registers[2]), std::ref(m_registers[3]));
 	#else
-		m_threads[i] = std::thread(process_bodies_mt,
-								   std::ref(m_compute_barrier1), std::ref(m_compute_barrier2), std::ref(m_render_barrier), std::ref(m_terminate_signal), std::ref(m_run_signal),
-								   std::ref(m_run_cv), std::ref(m_run_mutex),
-								   i, num_threads,
-								   std::ref(m_bodies_ref), std::ref(m_ss_ref));
+		#ifdef USE_OCTREE
+			m_threads[i] = std::thread(octree_calc_force_mt,
+									   std::ref(m_compute_barrier1), std::ref(m_compute_barrier2), std::ref(m_render_barrier), std::ref(m_terminate_signal), std::ref(m_run_signal),
+									   std::ref(m_run_cv), std::ref(m_run_mutex),
+									   i, num_threads,
+									   std::ref(m_bodies_ref), std::ref(m_shared_octree), std::ref(m_ss_ref));
+		#else
+			m_threads[i] = std::thread(process_bodies_mt,
+									   std::ref(m_compute_barrier1), std::ref(m_compute_barrier2), std::ref(m_render_barrier), std::ref(m_terminate_signal), std::ref(m_run_signal),
+									   std::ref(m_run_cv), std::ref(m_run_mutex),
+									   i, num_threads,
+									   std::ref(m_bodies_ref), std::ref(m_ss_ref));
+		#endif
 	#endif
 	}
 #endif
@@ -389,6 +400,9 @@ void SimScene::render(State state_before)
 #ifdef USE_THREADS
 	if (state_before != sim)
 	{
+	#ifdef USE_OCTREE
+		m_shared_octree->build(m_bodies_ref, m_ss_ref);
+	#endif
 		{
 			std::lock_guard<std::mutex> lock(m_run_mutex);
 			m_run_signal = true;
@@ -431,6 +445,9 @@ void SimScene::render(State state_before)
 	// optionally display FPS counter
 	render_fps_info();
 #ifdef USE_THREADS
+	#ifdef USE_OCTREE
+	m_shared_octree->build(m_bodies_ref, m_ss_ref);
+	#endif
 	m_render_barrier->arrive_and_wait();
 #endif
 

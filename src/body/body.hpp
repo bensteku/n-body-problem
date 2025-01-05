@@ -96,7 +96,6 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss);
 	struct octree  // also doubles as quadtree for the 2D case
 	{
 		
-		size_t max_occupancy;
 		bool is_leaf;
 
 		float com_x, com_y;
@@ -119,12 +118,23 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss);
 			std::array<octree*, 8> children;
 		#endif
 
+		octree()
+		#ifdef THREED
+		: c_x(0), c_y(0), size(0), c_z(0), is_leaf(true)
+		#else
+		: c_x(0), c_y(0), size(0), is_leaf(true)
+		#endif
+		{
+		
+			for (octree*& oc : children) oc = nullptr;
+
+		}
 	#ifndef THREED
-		octree(float x, float y, float s, size_t max_occupancy)
-			: c_x(x), c_y(y), size(s), max_occupancy(max_occupancy), is_leaf(true)
+		octree(float x, float y, float s=0)
+			: c_x(x), c_y(y), size(s), is_leaf(true)
 	#else
-		octree(float x, float y, float z, float s, size_t max_occupancy)
-			: c_x(x), c_y(y), c_z(z), size(s), max_occupancy(max_occupancy), isleaf(true)
+		octree(float x, float y, float z, float s=0)
+			: c_x(x), c_y(y), c_z(z), size(s), isleaf(true)
 	#endif
 		{
 
@@ -154,4 +164,10 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss);
 			bool in_bounds(const body* test_body) const;
 
 	};
+
+// multi threaded processor methods
+#ifdef USE_THREADS
+	void octree_calc_force_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads, std::vector<body>& bodies, std::unique_ptr<octree>& shared_octree, sim_settings& ss);
+	#endif
+
 #endif

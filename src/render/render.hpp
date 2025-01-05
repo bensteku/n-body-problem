@@ -188,6 +188,10 @@ class SimScene : public Scene
 		bool m_run_signal = false;
 		std::mutex m_run_mutex;
 		std::condition_variable m_run_cv;
+		#ifdef USE_OCTREE
+		// if we use octrees, we need to store an octree as well, such that all threads can use the same one
+			std::unique_ptr<octree> m_shared_octree;
+		#endif
 	#endif
 	public:
 		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);

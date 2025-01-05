@@ -18,7 +18,7 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE sfml-graphics sfml-window)
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
-#target_compile_definitions(${PROJECT_NAME} PRIVATE USE_THREADS) # temporary
+target_compile_definitions(${PROJECT_NAME} PRIVATE USE_THREADS) # temporary
 target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OCTREE) # temporary
 
 # Check for custom build variants
