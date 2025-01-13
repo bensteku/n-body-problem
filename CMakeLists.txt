@@ -36,8 +36,6 @@ elseif (BUILD_VARIANT STREQUAL "CUDA")
     target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cudart)
     message(STATUS "Building with CUDA support")
 
-    # temporary
-    target_compile_definitions(${PROJECT_NAME} PRIVATE THREED)
     if (DEFINED ENV{GLEW_DIR})
         set(GLEW_DIR $ENV{GLEW_DIR})
     endif()

@@ -15,7 +15,7 @@ namespace settings
 	static constexpr int fps_smoother = 100;
 
 	// physics settings
-	static constexpr size_t n_bodies = 8000;
+	static constexpr size_t n_bodies = 800;
 	static constexpr float timestep = 0.005;
 	static constexpr float g = 6.6743e-3;
 

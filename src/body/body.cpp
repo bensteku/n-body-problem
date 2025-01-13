@@ -295,7 +295,7 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 
 #ifdef USE_OCTREE
 	// create octree that is adapted to the current simulation space
-	octree* it_octree = new octree();
+	octree* it_octree = new octree();  // created on the heap to prevent stack overflow from the octree algorithm's recursion
 	it_octree->build(bodies, ss);
 
 	// run calculations
