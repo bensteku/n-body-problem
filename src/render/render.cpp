@@ -1,11 +1,4 @@
 #include "render.hpp"
-#ifdef USE_CUDA
-#include <cuda_runtime.h>
-#include "../body/body.cuh"
-#endif
-#include <ranges>
-
-#include "../misc/settings.hpp"
 
 std::vector<sf::CircleShape> init_shapes(const std::vector<body>& bodies)
 {
@@ -320,7 +313,7 @@ SimScene::SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, 
 {
 	
 #ifdef USE_THREADS
-	size_t num_threads = 16;//std::thread::hardware_concurrency() / 2;
+	size_t num_threads = std::thread::hardware_concurrency() / 2;
 
 	// uses unique pointer to avoid having to change the constructor's interface or main.cpp in case the USE_THREADS define is true
 	m_compute_barrier1 = std::make_unique<std::barrier<>>(num_threads);
@@ -397,21 +390,21 @@ State SimScene::process_inputs()
 void SimScene::render(State state_before)
 {
 
-#ifdef USE_THREADS
+	#ifdef USE_THREADS
 	if (state_before != sim)
 	{
-	#ifdef USE_OCTREE
+		#ifdef USE_OCTREE
 		m_shared_octree->build(m_bodies_ref, m_ss_ref);
-	#endif
+		#endif
 		{
 			std::lock_guard<std::mutex> lock(m_run_mutex);
 			m_run_signal = true;
 		}
 		m_run_cv.notify_all();
 	}
-#endif
+	#endif
 
-#ifdef USE_CUDA
+	#ifdef USE_CUDA
 	// if CUDA is enabled and the user changed the number of bodies or we're going into this method for the first time since setup
 	// we have to reallocate memory for our GPU pointers
 	if (state_before != sim)
@@ -425,30 +418,45 @@ void SimScene::render(State state_before)
 		cudaMalloc(&m_d_interactions_x, bytes2);
 		cudaMalloc(&m_d_interactions_y, bytes2);
 		cudaMemcpy(m_d_bodies, m_bodies_ref.data(), bytes, cudaMemcpyHostToDevice);
+
+		#ifdef USE_OCTREE
+		cudaFree(m_d_bodies_bu);
+		cudaFree(m_d_help);
+		cudaFree(m_d_indices);
+		cudaMalloc(&m_d_bodies_bu, bytes);
+		const size_t bytes3 = sizeof(sort_help) * m_bodies_ref.size();
+		const size_t bytes4 = sizeof(size_t) * m_bodies_ref.size();
+		cudaMalloc(&m_d_help, bytes3);
+		cudaMalloc(&m_d_indices, bytes4);
+		#endif
 	}
+	#ifndef USE_OCTREE
 	process_bodies_cuda(m_bodies_ref, m_d_bodies, m_d_interactions_x, m_d_interactions_y, m_ss_ref);
-#elif defined(USE_SIMD)
-	#ifdef USE_THREADS
-		m_compute_barrier2->arrive_and_wait();
 	#else
-		process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers[0], m_registers[1], m_registers[2], m_registers[3]);
+	process_bodies_cuda_octree()
 	#endif
-#else
+	#elif defined(USE_SIMD)
 	#ifdef USE_THREADS
-		m_compute_barrier2->arrive_and_wait();
+	m_compute_barrier2->arrive_and_wait();
 	#else
-		process_bodies(m_bodies_ref, m_ss_ref);
+	process_bodies_simd(m_bodies_ref, m_ss_ref, m_registers[0], m_registers[1], m_registers[2], m_registers[3]);
 	#endif
-#endif
+	#else
+	#ifdef USE_THREADS
+	m_compute_barrier2->arrive_and_wait();
+	#else
+	process_bodies(m_bodies_ref, m_ss_ref);
+	#endif
+	#endif
 	// update the shapes afterwards
 	update_shapes();
 	// optionally display FPS counter
 	render_fps_info();
-#ifdef USE_THREADS
+	#ifdef USE_THREADS
 	#ifdef USE_OCTREE
 	m_shared_octree->build(m_bodies_ref, m_ss_ref);
 	#endif
 	m_render_barrier->arrive_and_wait();
-#endif
+	#endif
 
 }

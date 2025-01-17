@@ -5,11 +5,21 @@
 #include <string>
 #include <thread>
 #include <barrier>
+#include <ranges>
 #include <SFML/Graphics.hpp>
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 #include "../body/body.hpp"
 #include "input.hpp"
 #include "../misc/util.hpp"
+#ifdef USE_CUDA
+#include "../body/body.cuh"
+#endif
+
+
+#include "../misc/settings.hpp"
 
 std::vector<sf::CircleShape> init_shapes(const std::vector<body>& bodies);
 
@@ -174,6 +184,11 @@ class SimScene : public Scene
 		body* m_d_bodies;
 		float* m_d_interactions_x;
 		float* m_d_interactions_y;
+		#ifdef USE_OCTREE
+		body* m_d_bodies_bu;
+		size_t* m_d_indices;
+		sort_help* m_d_help;
+		#endif
 	#endif
 
 		// if we run the program multi-threaded, we create a pool of threads to use

@@ -182,7 +182,7 @@ __device__ __forceinline__ bool in_bounds(cu_octree_node& node, body& test_body)
 
 }
 
-__global__ void build_grid_bottom(body* bodies, cu_octree_node* nodes, size_t* bodies_nodes_assignment, size_t n_bodies, size_t n_nodes, size_t n_nodes_bottom, size_t bottom_nodes_idx, float size, float min_x, float max_x, float min_y, float max_y)
+__global__ void build_grid_bottom(body* bodies, cu_octree_node* nodes, size_t* bodies_nodes_assignment, size_t n_bodies, size_t n_nodes, size_t n_nodes_bottom_side, size_t bottom_nodes_idx, float size, float min_x, float min_y)
 {
 
 	// initializes the octree nodes that cover the grid at deepest level determined by the user
@@ -190,46 +190,236 @@ __global__ void build_grid_bottom(body* bodies, cu_octree_node* nodes, size_t* b
 
 	int tid_x = blockIdx.x * blockDim.x + threadIdx.x;
 	int tid_y = blockIdx.y * blockDim.y + threadIdx.y;
-	int tid_node = tid_y * n_nodes_bottom + tid_x;
+	//int tid_node = bottom_nodes_idx + tid_y * n_nodes_bottom_side + tid_x;  // linear first x then y memory mapping
+	int tid_node = bottom_nodes_idx + floorf(static_cast<float>(tid_x) / 2.0) * n_nodes_bottom_side * 2 + floorf(static_cast<float>(tid_y) / 2.0) * 4 + (tid_x % 2) * 2 + tid_y % 2;  // mapping each 2x2 block of quadtree nodes to adjacent spots in linear memory  // n_nodes_bottom_side / 2 * 4, where 4 is the amount of subdivisions (relevant for octree later on)
 
 	if (tid_node < n_nodes)
 	{
 		// set up the bottom level of the grid
-		nodes[bottom_nodes_idx + tid_node].c_x = size * (tid_x + 0.5);
-		nodes[bottom_nodes_idx + tid_node].c_y = size * (tid_y + 0.5);
-		nodes[bottom_nodes_idx + tid_node].is_leaf = true;
-		nodes[bottom_nodes_idx + tid_node].node_id = bottom_nodes_idx + tid_node;
-		nodes[bottom_nodes_idx + tid_node].m = 0;
-		nodes[bottom_nodes_idx + tid_node].com_x = 0;
-		nodes[bottom_nodes_idx + tid_node].com_y = 0;
-		nodes[bottom_nodes_idx + tid_node].num_bodies = 0;
+		nodes[tid_node].c_x = min_x + size * (tid_x + 0.5);
+		nodes[tid_node].c_y = min_y + size * (tid_y + 0.5);
+		nodes[tid_node].is_leaf = true;
+		nodes[tid_node].node_id = tid_node;
+		nodes[tid_node].m = 0;
+		nodes[tid_node].com_x = 0;
+		nodes[tid_node].com_y = 0;
+		nodes[tid_node].num_bodies = 0;
+		for (size_t i = 0; i < 4; i++)
+		{
+			nodes[tid_node].children[i] = -1;
+		}
 
 		// for all bodies check if they fall into this node's cell
 		// and update the cell accordingly
 		for (size_t it = 0; it < n_bodies; it++)
 		{
-			if (in_bounds(nodes[bottom_nodes_idx + tid_node], bodies[it]))
+			if (in_bounds(nodes[tid_node], bodies[it]))
 			{
 				bodies_nodes_assignment[it] = tid_node;  // the assignment array will only consider nodes at the smallest grid size, i.e. leafs of the octree
-				nodes[bottom_nodes_idx + tid_node].com_x += bodies[it].x * bodies[it].m;
-				nodes[bottom_nodes_idx + tid_node].m += bodies[it].m;
-				nodes[bottom_nodes_idx + tid_node].num_bodies += 1;
+				nodes[tid_node].com_x += bodies[it].x * bodies[it].m;
+				nodes[tid_node].com_x += bodies[it].y * bodies[it].m;
+				nodes[tid_node].m += bodies[it].m;
+				nodes[tid_node].num_bodies += 1;
 			}
 		}
 
-		if (nodes[bottom_nodes_idx + tid_node].m != 0)
+		if (nodes[tid_node].m != 0)
 		{
-			nodes[bottom_nodes_idx + tid_node].com_x /= nodes[bottom_nodes_idx + tid_node].m;
-			nodes[bottom_nodes_idx + tid_node].com_y /= nodes[bottom_nodes_idx + tid_node].m;
+			nodes[tid_node].com_x /= nodes[tid_node].m;
+			nodes[tid_node].com_y /= nodes[tid_node].m;
 		}
 	}
 
 }
 
-void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, cu_octree_node* d_nodes, size_t* d_bodies_idxes, const sim_settings& ss)
+__global__ void build_grid_at_level(body* bodies, cu_octree_node* nodes, size_t n_nodes_at_level_side, size_t nodes_at_level_start_idx, size_t nodes_at_next_level_start_idx, float size, float min_x, float min_y)
 {
 
-	const size_t max_depth = 4;  // temp
+	int tid_x = blockIdx.x * blockDim.x + threadIdx.x;
+	int tid_y = blockIdx.y * blockDim.y + threadIdx.y;
+	int tid_within_current_grid = floorf(static_cast<float>(tid_x) / 2.0) * n_nodes_at_level_side * 2 + floorf(static_cast<float>(tid_y) / 2.0) * 4 + (tid_x % 2) * 2 + tid_y % 2;
+	int tid_node = nodes_at_level_start_idx + tid_within_current_grid;
+
+	if (tid_node >= nodes_at_level_start_idx && tid_node < nodes_at_next_level_start_idx)
+	{
+		nodes[tid_node].c_x = min_x + size * (tid_x + 0.5);
+		nodes[tid_node].c_y = min_y + size * (tid_y + 0.5);
+		nodes[tid_node].is_leaf = false;
+		nodes[tid_node].node_id = tid_node;
+		nodes[tid_node].m = 0;
+		nodes[tid_node].com_x = 0;
+		nodes[tid_node].com_y = 0;
+		nodes[tid_node].num_bodies = 0;
+		for (size_t i = 0; i < 4; i++)
+		{
+			nodes[tid_node].children[i] = nodes_at_next_level_start_idx + 4 * (tid_node - nodes_at_level_start_idx);
+			nodes[tid_node].com_x += nodes[nodes[tid_node].children[i]].m * nodes[nodes[tid_node].children[i]].com_x;
+			nodes[tid_node].com_y += nodes[nodes[tid_node].children[i]].m * nodes[nodes[tid_node].children[i]].com_y;
+			nodes[tid_node].m += nodes[nodes[tid_node].children[i]].m;
+		}
+
+		if (nodes[tid_node].m != 0)
+		{
+			nodes[tid_node].com_x /= nodes[tid_node].m;
+			nodes[tid_node].com_y /= nodes[tid_node].m;
+		}
+	}
+
+	__syncthreads();
+	// deal with the root, if we're that far up
+	if (tid_node == 1)
+	{
+		nodes[0].c_x = min_x + size;
+		nodes[0].c_y = min_y + size;
+		nodes[0].is_leaf = false;
+		nodes[0].node_id = 0;
+		nodes[0].m = 0;
+		nodes[0].com_x = 0;
+		nodes[0].com_y = 0;
+		nodes[0].num_bodies = 0;
+
+		for (size_t i = 0; i < 4; i++)
+		{
+			nodes[0].children[i] = nodes_at_next_level_start_idx + 4 * (0 - nodes_at_level_start_idx);
+			nodes[0].com_x += nodes[nodes[0].children[i]].m * nodes[nodes[0].children[i]].com_x;
+			nodes[0].com_y += nodes[nodes[0].children[i]].m * nodes[nodes[0].children[i]].com_y;
+			nodes[0].m += nodes[nodes[0].children[i]].m;
+		}
+
+		if (nodes[0].m != 0)
+		{
+			nodes[0].com_x /= nodes[0].m;
+			nodes[0].com_y /= nodes[0].m;
+		}
+	}
+
+}
+
+__device__ void octree_recursion_cuda(size_t idx, body* bodies, size_t node_idx, cu_octree_node* nodes, const float g, const float t, const int N, const float tolerance)
+{
+
+	cu_octree_node node = nodes[node_idx];
+	// largely the same as the CPU code in body.cpp
+	if (node.is_leaf && node.num_bodies == 0)
+	{
+		return;
+	}
+
+	if (node.is_leaf && in_bounds(node, bodies[idx]))
+	{
+		for (size_t idx2 = node.body_start_idx; idx2 < node.body_start_idx + node.num_bodies; idx2++)
+		{
+			float d_x = bodies[idx].x - node.com_x;
+			float d_y = bodies[idx].y - node.com_y;
+			float dist = d_x * d_x + d_y * d_y;
+
+			if (bodies[idx].r * bodies[idx].r + bodies[idx2].r + bodies[idx2].r >= dist)
+				break;
+
+			float dist_inv = rsqrtf(dist);
+
+			float force = -(bodies[idx2].m * g) / dist;
+			d_x *= dist_inv;
+			d_y *= dist_inv;
+			bodies[idx].v_x += d_x * force * t;
+			bodies[idx].v_y += d_y * force * t;
+		}
+	}
+	else
+	{
+		float d_x = bodies[idx].x - node.com_x;
+		float d_y = bodies[idx].y - node.com_y;
+
+		float dist = d_x * d_x + d_y * d_y;
+		float dist_inv = rsqrtf(dist);
+
+		if (dist_inv * node.size < tolerance)
+		{
+			if (bodies[idx].r * bodies[idx].r >= dist) return;
+			float force = -(node.m * g) / dist;
+			d_x *= dist_inv;
+			d_y *= dist_inv;
+			bodies[idx].v_x += d_x * force * t;
+			bodies[idx].v_y += d_y * force * t;
+		}
+		else if(!node.is_leaf)
+		{
+			for (size_t idx3 = 0; idx3 < 4; idx3++)
+			{
+				octree_recursion_cuda(idx, bodies, node.children[idx3], nodes, g, t, N, tolerance);
+			}
+		}
+	}
+
+}
+
+__global__ void octree_calc_force_cuda(body* bodies, cu_octree_node* nodes, const float g, const float t, const int N, const float tolerance)
+{
+
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+	if (tid < N)
+	{
+		octree_recursion_cuda(tid, bodies, 0, nodes, g, t, N, tolerance);
+	}
+
+}
+
+__global__ void set_up_sort(sort_help* help, size_t* indices, const int N)
+{
+
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	if (tid < N)
+	{
+		help[tid].node = indices[tid];
+		help[tid].body = tid;
+	}
+
+}
+
+__global__ void arrange_bodies(body* bodies_orig, body* bodies_new, cu_octree_node* nodes, sort_help* help, const int N)
+{
+
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	if (tid < N)
+	{
+		bodies_new[tid] = bodies_orig[help[tid].body];
+		nodes[help[tid].node].body_start_idx = tid;
+	}
+
+}
+
+void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body* d_bodies_bu, cu_octree_node* d_nodes, sort_help* d_help, size_t* d_bodies_idxes, const sim_settings& ss)
+{
+
+	// determine the dimensions of the grid the octree will cover
+	// such as size, number of nodes and location
+	float min_x = FLT_MAX;
+	float max_x = -FLT_MAX;
+	float min_y = FLT_MAX;
+	float max_y = -FLT_MAX;
+	#ifdef THREED
+	float min_z = FLT_MAX;
+	float max_z = -FLT_MAX;
+	#endif
+	for (const body& it : bodies)
+	{
+		if (it.x > max_x) max_x = it.x;
+		if (it.x < min_x) min_x = it.x;
+		if (it.y > max_y) max_y = it.y;
+		if (it.y < min_y) min_y = it.y;
+		#ifdef THREED
+		if (it.z > max_z) max_z = it.z;
+		if (it.z < min_z) min_z = it.z;
+		#endif
+	}
+	#ifndef THREED
+	float largest_span = std::max(max_x - min_x, max_y - min_y);
+	#else
+	float largest_span = std::max(max_x - min_x, max_y - min_y, max_z - min_z);
+	#endif
+
+	const size_t max_depth = 6;  // temp
 	size_t n_total_nodes = 0;
 	size_t nodes_per_level[max_depth] = {0};
 
@@ -239,16 +429,61 @@ void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, cu_oc
 		nodes_per_level[i] = incr;
 		n_total_nodes += incr;
 	}
+	nodes_per_level[0] = 1;
+	n_total_nodes += 1;
 
-	size_t bottom_grid_side_size = 2 << max_depth;
+	// now initialize all the nodes at the bottom of the octree and assign all bodies to them
+	size_t cur_grid_num_cells_side = 2 << max_depth;  // how many nodes there are along one side of the lowest level of the octree
+	float cur_grid_size = largest_span / cur_grid_num_cells_side;  // how large one cell at the bottom is in terms of world coordinates
 	size_t n_threads_per_dim = 32;
-	size_t n_blocks_per_dim = (bottom_grid_side_size + n_threads_per_dim - 1) / n_threads_per_dim;
-
+	size_t n_blocks_per_dim = (cur_grid_num_cells_side + n_threads_per_dim - 1) / n_threads_per_dim;
 	dim3 threads_2d(n_threads_per_dim, n_threads_per_dim);
 	dim3 blocks_2d(n_blocks_per_dim, n_blocks_per_dim);
+	size_t cur_level_nodes_start_idx = n_total_nodes - 1 - (cur_grid_num_cells_side << 2);
+	build_grid_bottom<<<blocks_2d, threads_2d>>>(d_bodies, d_nodes, d_bodies_idxes, bodies.size(), n_total_nodes, cur_grid_num_cells_side, n_total_nodes - (cur_grid_size << 2) - 1, bottom_grid_cell_size, min_x, min_y);
+	cudaDeviceSynchronize();
 
-	build_grid_bottom<<<blocks_2d, threads_2d>>>(d_bodies, d_nodes, bodies.size(), n_total_nodes, bottom_grid_side_size, n_total_nodes - (bottom_grid_side_size << 2))
+	// now that the bottom of the tree is complete, we have to sort the bodies such that they're located adjacent to each other in memory per node
+	size_t n_threads = 1024;
+	size_t n_blocks = (bodies.size() + n_threads - 1) / n_threads;
+	set_up_sort<<<n_blocks, n_threads>>>(d_help, d_bodies_idxes, bodies.size());
+	cudaDeviceSynchronize();
+	// sort via Thrust library
+	thrust::sort(d_help, d_help + bodies.size());
+	// move the bodies in memory
+	arrange_bodies << <n_blocks, n_threads >> > (d_bodies, d_bodies_bu, d_nodes, d_help, bodies.size());
+	cudaDeviceSynchronize();
+	// swap the pointers between current and backup bodies
+	body* temp = d_bodies;
+	d_bodies = d_bodies_bu;
+	d_bodies_bu = temp;
 
+
+	// build up the rest of the octree up to the root
+	// note: the root is handled by the level == 1 iteration
+	for (size_t level = max_depth - 1; level > 0; level--)
+	{
+		cur_grid_size *= 2;
+		cur_grid_num_cells_side = 2 << (level - 1);
+		n_blocks_per_dim = (cur_grid_num_cells_side + n_threads_per_dim - 1) / n_threads_per_dim;
+		dim3 blocks_2d(n_blocks_per_dim, n_blocks_per_dim);
+		build_grid_at_level<<<blocks_2d, threads_2d>>>(d_bodies, d_nodes, cur_grid_num_cells_side, cur_level_nodes_start_idx - (cur_grid_num_cells_side << 2), cur_level_nodes_start_idx, cur_grid_size, min_x, min_y);
+		cudaDeviceSynchronize();
+		cur_level_nodes_start_idx -= (cur_grid_num_cells_side << 2);
+	}
+
+	// finally, run the calculations with the octree on every single body
+	size_t n_threads = 1024;
+	size_t n_blocks = (bodies.size() + n_threads - 1) / n_threads;
+	octree_calc_force_cuda<<<n_blocks, n_threads>>>(d_bodies, d_nodes, ss.g, ss.delta_t, bodies.size(), ss.octree_tolerance);
+	cudaDeviceSynchronize();
+
+	// apply movement to bodies
+	calc_movement_cuda<<<n_blocks, n_threads>>>(d_bodies, ss.timestep, bodies.size());
+
+	// copy data back onto the CPU
+	const size_t bytes = sizeof(body) * bodies.size();
+	cudaMemcpy(bodies.data(), d_bodies, bytes, cudaMemcpyDeviceToHost);
 }
 
 #endif
