@@ -49,7 +49,7 @@
 #endif
 
 
-
+// this struct tracks various variables that the user can change during runtime
 struct sim_settings
 {
 
@@ -62,15 +62,18 @@ struct sim_settings
 	float circle_deviation = 0.0;
 	float x_range = 25;
 	float y_range = 25;
-#ifdef THREED
+	#ifdef THREED
 	float z_range = 25;
-#endif
+	#endif
 	float max_mass = 2000;
 	float min_mass = 2000;
-#ifdef USE_OCTREE
+	#ifdef USE_OCTREE
 	size_t octree_max_node_size = 32;
 	float octree_tolerance = 0.5;
-#endif
+	#ifdef USE_CUDA
+	size_t octree_max_depth = 6;
+	#endif
+	#endif
 
 };
 
@@ -83,91 +86,89 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 void process_bodies(std::vector<body>& bodies, sim_settings& ss);
 
 #ifdef USE_THREADS
-	// methods when using multi-threading
-	#ifdef USE_SIMD
-		void process_bodies_simd_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads,	std::vector<body>& bodies, sim_settings& ss, std::vector<__m256>& x_vec, std::vector<__m256>& y_vec, std::vector<__m256>& mass_vec, std::vector<__m256>& r_vec);
-	#else
-		void process_bodies_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads, std::vector<body>& bodies, sim_settings& ss);
-	#endif
+// methods when using multi-threading
+#ifdef USE_SIMD
+void process_bodies_simd_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads,	std::vector<body>& bodies, sim_settings& ss, std::vector<__m256>& x_vec, std::vector<__m256>& y_vec, std::vector<__m256>& mass_vec, std::vector<__m256>& r_vec);
+#else
+void process_bodies_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads, std::vector<body>& bodies, sim_settings& ss);
+#endif
 #endif
 
 #ifdef USE_OCTREE
-	// node for an octree data structure
-	struct octree  // also doubles as quadtree for the 2D case
+// node for an octree data structure
+struct octree  // also doubles as quadtree for the 2D case
+{
+		
+	bool is_leaf;
+
+	float com_x, com_y;
+	float c_x, c_y;
+	#ifdef THREED
+	float com_z;
+	float c_z;
+	#endif
+	float size;
+	float m;
+
+	std::vector<const body*> bodies;
+
+	// children order:
+	// 0: nw, 1: ne, 2: sw, 3: se,
+	// for 3D: 4: nw2, 5: ne2, 6: sw2, 7: se2
+	#ifndef THREED
+	std::array<octree*, 4> children;
+	#else
+	std::array<octree*, 8> children;
+	#endif
+
+	octree()
+	#ifdef THREED
+	: c_x(0), c_y(0), size(0), c_z(0), is_leaf(true)
+	#else
+	: c_x(0), c_y(0), size(0), is_leaf(true)
+	#endif
 	{
 		
-		bool is_leaf;
+		for (octree*& oc : children) oc = nullptr;
 
-		float com_x, com_y;
-		float c_x, c_y;
-		#ifdef THREED
-			float com_z;
-			float c_z;
-		#endif
-		float size;
-		float m;
-
-		std::vector<const body*> bodies;
-
-		// children order:
-		// 0: nw, 1: ne, 2: sw, 3: se,
-		// for 3D: 4: nw2, 5: ne2, 6: sw2, 7: se2
-		#ifndef THREED
-			std::array<octree*, 4> children;
-		#else
-			std::array<octree*, 8> children;
-		#endif
-
-		octree()
-		#ifdef THREED
-		: c_x(0), c_y(0), size(0), c_z(0), is_leaf(true)
-		#else
-		: c_x(0), c_y(0), size(0), is_leaf(true)
-		#endif
-		{
-		
-			for (octree*& oc : children) oc = nullptr;
-
-		}
+	}
 	#ifndef THREED
-		octree(float x, float y, float s=0)
-			: c_x(x), c_y(y), size(s), is_leaf(true)
+	octree(float x, float y, float s=0)
+		: c_x(x), c_y(y), size(s), is_leaf(true)
 	#else
-		octree(float x, float y, float z, float s=0)
-			: c_x(x), c_y(y), c_z(z), size(s), isleaf(true)
+	octree(float x, float y, float z, float s=0)
+		: c_x(x), c_y(y), c_z(z), size(s), isleaf(true)
 	#endif
-		{
+	{
 
-			for (octree*& oc : children) oc = nullptr;
+		for (octree*& oc : children) oc = nullptr;
 			
-		}
+	}
 
-		~octree()
-		{
+	~octree()
+	{
 
-			for (octree* oc : children) delete oc;
+		for (octree* oc : children) delete oc;
 
-		}
+	}
 
-		void build(std::vector<body>& start_bodies, sim_settings& ss);
+	void build(std::vector<body>& start_bodies, sim_settings& ss);
 	#ifdef USE_SIMD
-		void calc_force_simd(body& test_body, sim_settings& ss);
-	#elif defined(USE_CUDA)
-
+	void calc_force_simd(body& test_body, sim_settings& ss);
 	#else
-		void calc_force(body& test_body, sim_settings& ss);
+	void calc_force(body& test_body, sim_settings& ss);
 	#endif
 
-		private:
-			void subdivide(sim_settings& ss);
-			void update_com();
-			bool in_bounds(const body* test_body) const;
+	private:
+		void subdivide(sim_settings& ss);
+		void update_com();
+		bool in_bounds(const body* test_body) const;
 
-	};
+};
 
 // multi threaded processor methods
 #ifdef USE_THREADS
-	void octree_calc_force_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads, std::vector<body>& bodies, std::unique_ptr<octree>& shared_octree, sim_settings& ss);
-	#endif
+void octree_calc_force_mt(std::unique_ptr<std::barrier<>>& compute_barrier1, std::unique_ptr<std::barrier<>>& compute_barrier2, std::unique_ptr<std::barrier<>>& render_barrier, std::atomic<bool>& terminate, bool& run, std::condition_variable& run_cv, std::mutex& run_mtx, size_t thread_id, size_t num_threads, std::vector<body>& bodies, std::unique_ptr<octree>& shared_octree, sim_settings& ss);
+#endif
 
 #endif

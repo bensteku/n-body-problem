@@ -419,28 +419,17 @@ void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body*
 	float largest_span = std::max(max_x - min_x, max_y - min_y, max_z - min_z);
 	#endif
 
-	const size_t max_depth = 6;  // temp
-	size_t n_total_nodes = 0;
-	size_t nodes_per_level[max_depth] = {0};
-
-	for (size_t i = 1; i < max_depth; i++)
-	{
-		size_t incr = std::pow(4, i);
-		nodes_per_level[i] = incr;
-		n_total_nodes += incr;
-	}
-	nodes_per_level[0] = 1;
-	n_total_nodes += 1;
+	size_t n_total_nodes = ((std::pow(4, ss.octree_max_depth + 1) - 1) / (ss.octree_max_depth - 1));
 
 	// now initialize all the nodes at the bottom of the octree and assign all bodies to them
-	size_t cur_grid_num_cells_side = 2 << max_depth;  // how many nodes there are along one side of the lowest level of the octree
+	size_t cur_grid_num_cells_side = 2 << ss.octree_max_depth;  // how many nodes there are along one side of the lowest level of the octree
 	float cur_grid_size = largest_span / cur_grid_num_cells_side;  // how large one cell at the bottom is in terms of world coordinates
 	size_t n_threads_per_dim = 32;
 	size_t n_blocks_per_dim = (cur_grid_num_cells_side + n_threads_per_dim - 1) / n_threads_per_dim;
 	dim3 threads_2d(n_threads_per_dim, n_threads_per_dim);
 	dim3 blocks_2d(n_blocks_per_dim, n_blocks_per_dim);
 	size_t cur_level_nodes_start_idx = n_total_nodes - 1 - (cur_grid_num_cells_side << 2);
-	build_grid_bottom<<<blocks_2d, threads_2d>>>(d_bodies, d_nodes, d_bodies_idxes, bodies.size(), n_total_nodes, cur_grid_num_cells_side, n_total_nodes - (cur_grid_size << 2) - 1, bottom_grid_cell_size, min_x, min_y);
+	build_grid_bottom<<<blocks_2d, threads_2d>>>(d_bodies, d_nodes, d_bodies_idxes, bodies.size(), n_total_nodes, cur_grid_num_cells_side, cur_level_nodes_start_idx, cur_grid_size, min_x, min_y);
 	cudaDeviceSynchronize();
 
 	// now that the bottom of the tree is complete, we have to sort the bodies such that they're located adjacent to each other in memory per node
@@ -449,9 +438,9 @@ void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body*
 	set_up_sort<<<n_blocks, n_threads>>>(d_help, d_bodies_idxes, bodies.size());
 	cudaDeviceSynchronize();
 	// sort via Thrust library
-	thrust::sort(d_help, d_help + bodies.size());
+	//thrust::sort(d_help, d_help + bodies.size());
 	// move the bodies in memory
-	arrange_bodies << <n_blocks, n_threads >> > (d_bodies, d_bodies_bu, d_nodes, d_help, bodies.size());
+	arrange_bodies<<<n_blocks, n_threads>>>(d_bodies, d_bodies_bu, d_nodes, d_help, bodies.size());
 	cudaDeviceSynchronize();
 	// swap the pointers between current and backup bodies
 	body* temp = d_bodies;
@@ -461,7 +450,7 @@ void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body*
 
 	// build up the rest of the octree up to the root
 	// note: the root is handled by the level == 1 iteration
-	for (size_t level = max_depth - 1; level > 0; level--)
+	for (size_t level = ss.octree_max_depth - 1; level > 0; level--)
 	{
 		cur_grid_size *= 2;
 		cur_grid_num_cells_side = 2 << (level - 1);
@@ -473,9 +462,9 @@ void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body*
 	}
 
 	// finally, run the calculations with the octree on every single body
-	size_t n_threads = 1024;
-	size_t n_blocks = (bodies.size() + n_threads - 1) / n_threads;
-	octree_calc_force_cuda<<<n_blocks, n_threads>>>(d_bodies, d_nodes, ss.g, ss.delta_t, bodies.size(), ss.octree_tolerance);
+	n_threads = 1024;
+	n_blocks = (bodies.size() + n_threads - 1) / n_threads;
+	octree_calc_force_cuda<<<n_blocks, n_threads>>>(d_bodies, d_nodes, ss.g, ss.timestep, bodies.size(), ss.octree_tolerance);
 	cudaDeviceSynchronize();
 
 	// apply movement to bodies

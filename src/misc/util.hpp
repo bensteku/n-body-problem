@@ -1,16 +1,16 @@
 #pragma once
 
-#include <bit>
-#include <limits>
-#include <cstdint>
-#include <vector>
-#include <array>
-#include <cmath>
 #include "immintrin.h"
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <vector>
 
 std::array<std::vector<__m256>, 4> set_up_simd_registers(size_t num_elements);
 
-constexpr float rsqrt(float number) noexcept
+constexpr float rsqrt_cpu(float number) noexcept
 {
 
     static_assert(std::numeric_limits<float>::is_iec559); // (enable only on IEEE 754)

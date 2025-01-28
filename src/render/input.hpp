@@ -18,6 +18,7 @@ enum State
 
 };
 
+// this struct tracks the various inputs that are possible
 struct input_settings
 {
 
@@ -40,10 +41,10 @@ struct input_settings
 	bool n_pressed = false;
 	bool b_pressed = false;
 	bool c_pressed = false;
-#ifdef USE_OCTREE
+	#ifdef USE_OCTREE
 	bool o_pressed = false;
 	bool p_pressed = false;
-#endif
+	#endif
 	// toggle for showing fps
 	bool f_toggle = false;
 	// storage for new bodies in custom mode
@@ -63,7 +64,7 @@ inline void process_inputs_sim(sf::RenderWindow& window, input_settings& is, sim
 				window.close();
 				break;
 			case sf::Event::MouseWheelMoved:
-			#ifdef USE_OCTREE
+				#ifdef USE_OCTREE
 				if (is.o_pressed)
 				{
 					if (event.mouseWheel.delta >= 0)
@@ -77,7 +78,7 @@ inline void process_inputs_sim(sf::RenderWindow& window, input_settings& is, sim
 					ss.octree_tolerance = std::max(0.0, ss.octree_tolerance + 0.01 * event.mouseWheel.delta);
 					return;
 				}
-			#endif
+				#endif
 				is.zoom *= 1 - ((0.05 + (int)is.ctrl_pressed * settings::zoom_modifier) * event.mouseWheel.delta);
 				break;
 			case sf::Event::MouseButtonPressed:
@@ -144,14 +145,14 @@ inline void process_inputs_sim(sf::RenderWindow& window, input_settings& is, sim
 						ss.x_range = 25;
 						ss.y_range = 25;
 						break;
-				#ifdef USE_OCTREE
+					#ifdef USE_OCTREE
 					case sf::Keyboard::Scan::O:
 						is.o_pressed = true;
 						break;
 					case sf::Keyboard::Scan::P:
 						is.p_pressed = true;
 						break;
-				#endif
+					#endif
 					default:
 						break;
 				}
@@ -162,14 +163,14 @@ inline void process_inputs_sim(sf::RenderWindow& window, input_settings& is, sim
 					case sf::Keyboard::Scan::LControl:
 						is.ctrl_pressed = false;
 						break;
-				#ifdef USE_OCTREE
+					#ifdef USE_OCTREE
 					case sf::Keyboard::Scan::O:
 						is.o_pressed = false;
 						break;
 					case sf::Keyboard::Scan::P:
 						is.p_pressed = false;
 						break;
-				#endif
+					#endif
 					default:
 						break;
 				}

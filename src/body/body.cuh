@@ -4,12 +4,11 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cmath>
-#include <thrust/sort.h>
+//#include <thrust/sort.h>
 
 #include "body.hpp"
 
 void process_bodies_cuda(std::vector<body>& bodies, body* d_bodies, float* d_interactions_x, float* d_interactions_y, const sim_settings& ss);
-void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body* d_bodies_bu, cu_octree_node* d_nodes, sort_help* d_help, size_t* d_bodies_idxes, const sim_settings& ss);
 
 #ifdef USE_OCTREE
 
@@ -47,11 +46,12 @@ struct sort_help
 	size_t body;
 	size_t node;
 
-	__host__ __device__
-		bool operator<(const sort_help& other) const {
+	bool operator<(const sort_help& other) const {
 		return node < other.node;
 	}
 
 };
+
+void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body* d_bodies_bu, cu_octree_node* d_nodes, sort_help* d_help, size_t* d_bodies_idxes, const sim_settings& ss);
 
 #endif

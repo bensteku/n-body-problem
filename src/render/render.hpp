@@ -25,26 +25,26 @@ std::vector<sf::CircleShape> init_shapes(const std::vector<body>& bodies);
 
 const std::string ui_string1 =
 	#ifdef USE_CUDA
-		"CUDA";
+	"CUDA";
 	#elif defined(USE_SIMD)
-		"SIMD";
+	"SIMD";
 	#else
-		"SISD";
+	"SISD";
 	#endif
 
 
 const std::string ui_string2 =
 	#ifdef USE_THREADS
-		" (multi-threaded)";
+	" (multi-threaded)";
 	#else
-		"";
+	"";
 	#endif
 
 const std::string ui_string3 =
 	#ifdef USE_OCTREE
-		" (Octree)";
+	" (Octree)";
 	#else
-		"";
+	"";
 	#endif
 
 class Scene
@@ -180,7 +180,7 @@ class SimScene : public Scene
 
 	private:
 		// if CUDA is used, we create pointers for memory on the GPU
-	#ifdef USE_CUDA
+		#ifdef USE_CUDA
 		body* m_d_bodies;
 		float* m_d_interactions_x;
 		float* m_d_interactions_y;
@@ -188,11 +188,12 @@ class SimScene : public Scene
 		body* m_d_bodies_bu;
 		size_t* m_d_indices;
 		sort_help* m_d_help;
+		cu_octree_node* m_d_nodes;
 		#endif
-	#endif
+		#endif
 
 		// if we run the program multi-threaded, we create a pool of threads to use
-	#ifdef USE_THREADS
+		#ifdef USE_THREADS
 		std::vector<std::thread> m_threads;
 		// have to allocate on heap to avoid changing the constructor's interface
 		std::unique_ptr<std::barrier<>> m_compute_barrier1;
@@ -205,15 +206,15 @@ class SimScene : public Scene
 		std::condition_variable m_run_cv;
 		#ifdef USE_OCTREE
 		// if we use octrees, we need to store an octree as well, such that all threads can use the same one
-			std::unique_ptr<octree> m_shared_octree;
+		std::unique_ptr<octree> m_shared_octree;
 		#endif
-	#endif
+		#endif
 	public:
 		SimScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::vector<sf::CircleShape>& shapes_ref, input_settings& is_ref, sim_settings& ss_ref);
-	#ifdef USE_THREADS
+		#ifdef USE_THREADS
 		// only needed in the multi-threaded case to shut the threads safely
 		~SimScene();
-	#endif
+		#endif
 
 		State process_inputs();
 		void render(State state_before);

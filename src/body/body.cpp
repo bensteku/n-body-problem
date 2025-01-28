@@ -117,12 +117,12 @@ void calc_force(body& body1, body& body2, sim_settings& ss)
 	float d_x = body1.x - body2.x;
 	float d_y = body1.y - body2.y;
 
-#ifndef THREED
+	#ifndef THREED
 	float dist = d_x * d_x + d_y * d_y;  // no square root needed here because the formula for the force squares it anyway
-#else
+	#else
 	float d_z = body1.z - body2.z;
 	float dist = d_x * d_x + d_y * d_y + d_z * d_z;
-#endif
+	#endif
 
 	float force;
 	if ((body1.r + body2.r) * (body1.r + body2.r) >= dist)
@@ -137,7 +137,7 @@ void calc_force(body& body1, body& body2, sim_settings& ss)
 	}
 	
 	// get the inverse of the distance
-	float dist_inv = rsqrt(dist);
+	float dist_inv = rsqrt_cpu(dist);
 
 	// and normalize the x and y components with it
 	d_x *= dist_inv;
@@ -151,11 +151,11 @@ void calc_force(body& body1, body& body2, sim_settings& ss)
 	body1.v_y += d_y * force * ss.timestep / body1.m;
 	body2.v_y -= d_y * force * ss.timestep / body2.m;
 
-#ifdef THREED
+	#ifdef THREED
 	// same for z
 	body1.v_z += d_z * force * ss.timestep / body1.m;
 	body1.v_z -= d_z * force * ss.timestep / body2.m;
-#endif
+	#endif
 
 }
 
@@ -163,10 +163,10 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 {
 
 	// redirect this call into the octree method, if so desired
-#ifdef USE_OCTREE
+	#ifdef USE_OCTREE
 	process_bodies(bodies, ss);
 	return;
-#endif
+	#endif
 
 	const size_t num_elements = bodies.size();
 	const size_t num_packed_elements = x_vec.size();
@@ -293,7 +293,7 @@ void process_bodies_simd(std::vector<body>& bodies, sim_settings& ss, std::vecto
 void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 {
 
-#ifdef USE_OCTREE
+	#ifdef USE_OCTREE
 	// create octree that is adapted to the current simulation space
 	octree* it_octree = new octree();  // created on the heap to prevent stack overflow from the octree algorithm's recursion
 	it_octree->build(bodies, ss);
@@ -301,17 +301,17 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 	// run calculations
 	for (body& it : bodies)
 	{
-	#ifdef USE_SIMD
+		#ifdef USE_SIMD
 		it_octree->calc_force_simd(it, ss);
-	#else
+		#else
 		it_octree->calc_force(it, ss);
-	#endif
+		#endif
 	}
 
 	// destroy octree
 	delete it_octree;
 
-#else
+	#else
 	for (auto it = bodies.begin(); it != bodies.end() - 1; it++)
 	{
 		for (auto it2 = it + 1; it2 != bodies.end(); it2++)
@@ -319,7 +319,7 @@ void process_bodies(std::vector<body>& bodies, sim_settings& ss)
 			calc_force(*it, *it2, ss);
 		}
 	}
-#endif
+	#endif
 	
 	for (body& it : bodies)
 	{
@@ -659,17 +659,17 @@ void octree::build(std::vector<body>& start_bodies, sim_settings& ss)
 	float max_x = -FLT_MAX;
 	float min_y = FLT_MAX;
 	float max_y = -FLT_MAX;
-#ifdef THREED
+    #ifdef THREED
 	float min_z = FLT_MAX;
 	float max_z = -FLT_MAX;
-#endif
+    #endif
 	for (const body& it : start_bodies)
 	{
 		if (it.x > max_x) max_x = it.x;
 		if (it.x < min_x) min_x = it.x;
 		if (it.y > max_y) max_y = it.y;
 		if (it.y < min_y) min_y = it.y;
-	#ifdef THREED
+	    #ifdef THREED
 		if (it.z > max_z) max_z = it.z;
 		if (it.z < min_z) min_z = it.z;
 	#endif
@@ -677,12 +677,12 @@ void octree::build(std::vector<body>& start_bodies, sim_settings& ss)
 	// + 0.005 is a fudge factor
 	c_x = min_x + (max_x - min_x) / 2;
 	c_y = min_y + (max_y - min_y) / 2;
-#ifndef THREED
+	#ifndef THREED
 	size = std::max(max_x - min_x, max_y - min_y) + 0.005;
-#else
+	#else
 	size = std::max(max_x - min_x, max_y - min_y, max_z - min_z) + 0.005;
 	c_z = min_z + (max_z - min_z) / 2;
-#endif
+	#endif
 	for (const body& it : start_bodies)
 	{
 		bodies.push_back(&it);
@@ -716,9 +716,9 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 		__m256 y;
 		__m256 r;
 		__m256 m;
-	#ifdef THREED
+		#ifdef THREED
 		__m256 z;
-	#endif
+		#endif
 
 		__m256 it_x = _mm256_set1_ps(test_body.x);
 		__m256 it_y = _mm256_set1_ps(test_body.y);
@@ -726,18 +726,18 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 		__m256 it_m = _mm256_set1_ps(test_body.m);
 		__m256 g = _mm256_set1_ps(ss.g);
 		__m256 dt = _mm256_set1_ps(ss.timestep);
-	#ifdef THREED
+		#ifdef THREED
 		__m256 it_z = _mm256_set1_ps(test_body.z);
-	#endif
+		#endif
 
 		for (size_t i = 0; i < num_packed_elements; i++)
 		{
 			const size_t indices[8] = { std::min(i * 8, num_bodies - 1), std::min(i * 8 + 1, num_bodies - 1), std::min(i * 8 + 2, num_bodies - 1), std::min(i * 8 + 3, num_bodies - 1), std::min(i * 8 + 4, num_bodies - 1), std::min(i * 8 + 5, num_bodies - 1), std::min(i * 8 + 6, num_bodies - 1), std::min(i * 8 + 7, num_bodies - 1) };
 			x = _mm256_set_ps(bodies[indices[7]]->x, bodies[indices[6]]->x, bodies[indices[5]]->x, bodies[indices[4]]->x, bodies[indices[3]]->x, bodies[indices[2]]->x, bodies[indices[1]]->x, bodies[indices[0]]->x);
 			y = _mm256_set_ps(bodies[indices[7]]->y, bodies[indices[6]]->y, bodies[indices[5]]->y, bodies[indices[4]]->y, bodies[indices[3]]->y, bodies[indices[2]]->y, bodies[indices[1]]->y, bodies[indices[0]]->y);
-#ifdef THREED
+			#ifdef THREED
 			z = _mm256_set_ps(bodies[indices[7]]->z, bodies[indices[6]]->z, bodies[indices[5]]->z, bodies[indices[4]]->z, bodies[indices[3]]->z, bodies[indices[2]]->z, bodies[indices[1]]->z, bodies[indices[0]]->z);
-#endif
+			#endif
 			m = _mm256_set_ps(bodies[indices[7]]->m, bodies[indices[6]]->m, bodies[indices[5]]->m, bodies[indices[4]]->m, bodies[indices[3]]->m, bodies[indices[2]]->m, bodies[indices[1]]->m, bodies[indices[0]]->m);
 			r = _mm256_set_ps(bodies[indices[7]]->r, bodies[indices[6]]->r, bodies[indices[5]]->r, bodies[indices[4]]->r, bodies[indices[3]]->r, bodies[indices[2]]->r, bodies[indices[1]]->r, bodies[indices[0]]->r);
 			
@@ -761,11 +761,11 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 			__m256 dy = _mm256_sub_ps(it_y, y);
 			__m256 dy_squ = _mm256_mul_ps(dy, dy);
 			__m256 dist = _mm256_add_ps(dx, dy);
-		#ifdef THREED
+			#ifdef THREED
 			__m256 dz = _mm256_sub_ps(it_z, z);
 			__m256 dz_squ = _mm256_mul_ps(dz, dz);
 			dist = _mm256_add_ps(dist, dz);
-		#endif
+			#endif
 			__m256 r_check = _mm256_add_ps(r, it_r);
 			r_check = _mm256_mul_ps(r_check, r_check);
 			r_check = _mm256_cmp_ps(r_check, dist, _CMP_LT_OQ);
@@ -781,9 +781,9 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 
 			dx = _mm256_mul_ps(dx, dist);
 			dy = _mm256_mul_ps(dy, dist);
-		#ifdef THREED
+			#ifdef THREED
 			dz = _mm256_mul_ps(dz, dist);
-		#endif
+			#endif
 
 			__m256 vel = _mm256_mul_ps(force, dx);
 			vel = _mm256_mul_ps(vel, dt);
@@ -795,12 +795,12 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 			dy = _mm256_div_ps(vel, it_m);
 			test_body.v_y -= reduce_register(dy);
 
-		#ifdef THREED
+			#ifdef THREED
 			__m256 vel = _mm256_mul_ps(force, dz);
 			vel = _mm256_mul_ps(vel, dt);
 			dz = _mm256_div_ps(vel, it_m);
 			test_body.v_z -= reduce_register(dz);
-		#endif
+			#endif
 		}
 	}
 	// otherwise we run the octree comparison and do a simplified calculation with the center of mass
@@ -809,14 +809,14 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 		float d_x = test_body.x - com_x;
 		float d_y = test_body.y - com_y;
 
-	#ifndef THREED
+		#ifndef THREED
 		float dist = d_x * d_x + d_y * d_y;
-	#else
+		#else
 		float d_z = test_body.z - com_z;
 		float dist = d_x * d_x + d_y * d_y + d_z * d_z;
-	#endif
+		#endif
 
-		float dist_inv = rsqrt(dist);
+		float dist_inv = rsqrt_cpu(dist);
 
 		// calculate force either with the current com or all child coms
 		if (dist_inv * size < ss.octree_tolerance)
@@ -828,10 +828,10 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 			test_body.v_x += d_x * force * ss.timestep;
 			d_y *= dist_inv;
 			test_body.v_y += d_y * force * ss.timestep;
-	#ifdef THREED
+			#ifdef THREED
 			d_z *= dist_inv;
 			test_body.v_z += d_z * force * ss.timestep;
-	#endif
+			#endif
 		}
 		else if (!is_leaf)
 		{
@@ -863,13 +863,13 @@ void octree::calc_force(body& test_body, sim_settings& ss)
 			float d_x = test_body.x - it->x;
 			float d_y = test_body.y - it->y;
 
-		#ifndef THREED
+			#ifndef THREED
 			float dist = d_x * d_x + d_y * d_y;
-		#else
+			#else
 			float d_z = test_body.z - it->z;
 			float dist = d_x * d_x + d_y * d_y + d_z * d_z;
-		#endif
-			float dist_inv = rsqrt(dist);
+			#endif
+			float dist_inv = rsqrt_cpu(dist);
 
 			if (test_body.r * test_body.r + it->r * it->r >= dist)
 				break;
@@ -879,10 +879,10 @@ void octree::calc_force(body& test_body, sim_settings& ss)
 			test_body.v_x += d_x * force * ss.timestep;
 			d_y *= dist_inv;
 			test_body.v_y += d_y * force * ss.timestep;
-		#ifdef THREED
+			#ifdef THREED
 			d_z *= dist_inv;
 			test_body.v_z += d_z * force * ss.timestep;
-		#endif 
+			#endif 
 		}
 	}
 	// otherwise we run the octree comparison and do a simplified calculation with the center of mass
@@ -891,14 +891,14 @@ void octree::calc_force(body& test_body, sim_settings& ss)
 		float d_x = test_body.x - com_x;
 		float d_y = test_body.y - com_y;
 
-	#ifndef THREED
+		#ifndef THREED
 		float dist = d_x * d_x + d_y * d_y;
-	#else
+		#else
 		float d_z = test_body.z - com_z;
 		float dist = d_x * d_x + d_y * d_y + d_z * d_z;
-	#endif
+		#endif
 
-		float dist_inv = rsqrt(dist);
+		float dist_inv = rsqrt_cpu(dist);
 
 		// calculate force either with the current com or all child coms
 		if (dist_inv * size < ss.octree_tolerance)
@@ -910,10 +910,10 @@ void octree::calc_force(body& test_body, sim_settings& ss)
 			test_body.v_x += d_x * force * ss.timestep;
 			d_y *= dist_inv;
 			test_body.v_y += d_y * force * ss.timestep;
-		#ifdef THREED
+			#ifdef THREED
 			d_z *= dist_inv;
 			test_body.v_z += d_z * force * ss.timestep;
-		#endif
+			#endif
 		}
 		else if (!is_leaf)
 		{
@@ -1035,12 +1035,12 @@ void octree::subdivide(sim_settings& ss)
 	// otherwise, distribute bodies to child nodes
 	else
 	{
-	#ifndef THREED
+		#ifndef THREED
 		children[0] = new octree(c_x - size / 4, c_y + size / 4, size / 2);
 		children[1] = new octree(c_x + size / 4, c_y + size / 4, size / 2);
 		children[2] = new octree(c_x - size / 4, c_y - size / 4, size / 2);
 		children[3] = new octree(c_x + size / 4, c_y - size / 4, size / 2);
-	#else
+		#else
 		children[0] = new octree(c_x - size / 2, c_y + size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
 		children[1] = new octree(c_x + size / 2, c_y + size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
 		children[2] = new octree(c_x - size / 2, c_y - size / 2, c_z - size / 2, size / 2, ss.octree_max_node_size);
@@ -1049,7 +1049,7 @@ void octree::subdivide(sim_settings& ss)
 		children[5] = new octree(c_x + size / 2, c_y + size / 2, c_z + size / 2, size / 2, ss.octree_max_node_size);
 		children[6] = new octree(c_x - size / 2, c_y - size / 2, c_z + size / 2, size / 2, ss.octree_max_node_size);
 		children[7] = new octree(c_x + size / 2, c_y - size / 2, c_z + size / 2, size / 2, ss.octree_max_node_size);
-	#endif
+		#endif
 		for (const body*& it : bodies)
 		{
 			for (octree*& child : children)
@@ -1078,9 +1078,9 @@ bool octree::in_bounds(const body* test_body) const
 	float box = size / 2;
 	if (test_body->x >= c_x + box + 1e-3 || test_body->x < c_x - box - 1e-3) return false;
 	if (test_body->y >= c_y + box + 1e-3 || test_body->y < c_y - box - 1e-3) return false;
-#ifdef THREED
+	#ifdef THREED
 	if (test_body->x > c_x + box + 1e-3 || test_body->x < c_x - box - 1e-3) return false;
-#endif
+	#endif
 	return true;
 
 }
