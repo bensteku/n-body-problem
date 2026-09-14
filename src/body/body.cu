@@ -1,4 +1,5 @@
 #include "body.cuh"
+#include <iostream>
 
 #define reduce_threads 1024
 
@@ -431,14 +432,19 @@ void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body*
 	size_t cur_level_nodes_start_idx = n_total_nodes - 1 - (cur_grid_num_cells_side << 2);
 	build_grid_bottom<<<blocks_2d, threads_2d>>>(d_bodies, d_nodes, d_bodies_idxes, bodies.size(), n_total_nodes, cur_grid_num_cells_side, cur_level_nodes_start_idx, cur_grid_size, min_x, min_y);
 	cudaDeviceSynchronize();
-
 	// now that the bottom of the tree is complete, we have to sort the bodies such that they're located adjacent to each other in memory per node
 	size_t n_threads = 1024;
 	size_t n_blocks = (bodies.size() + n_threads - 1) / n_threads;
 	set_up_sort<<<n_blocks, n_threads>>>(d_help, d_bodies_idxes, bodies.size());
 	cudaDeviceSynchronize();
 	// sort via Thrust library
-	//thrust::sort(d_help, d_help + bodies.size());
+	sort_help* tempo = new sort_help[bodies.size()];
+	cudaMemcpy(d_help, tempo, bodies.size() * sizeof(sort_help), cudaMemcpyDeviceToHost);
+	std::cout << tempo[10].body << " " << tempo[10].node << std::endl;
+	thrust::device_ptr<sort_help> thrust_help(d_help);
+	thrust::sort(thrust_help, thrust_help + bodies.size());
+	cudaMemcpy(d_help, tempo, bodies.size() * sizeof(sort_help), cudaMemcpyDeviceToHost);
+	std::cout << tempo[10].body << " " << tempo[10].node << std::endl;
 	// move the bodies in memory
 	arrange_bodies<<<n_blocks, n_threads>>>(d_bodies, d_bodies_bu, d_nodes, d_help, bodies.size());
 	cudaDeviceSynchronize();
@@ -473,6 +479,7 @@ void process_bodies_octree_cuda(std::vector<body>& bodies, body* d_bodies, body*
 	// copy data back onto the CPU
 	const size_t bytes = sizeof(body) * bodies.size();
 	cudaMemcpy(bodies.data(), d_bodies, bytes, cudaMemcpyDeviceToHost);
+	printf("hallo3\n");
 }
 
 #endif

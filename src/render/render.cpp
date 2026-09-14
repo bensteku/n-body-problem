@@ -11,7 +11,7 @@ std::vector<sf::CircleShape> init_shapes(const std::vector<body>& bodies)
 		// divide by 100 here is safe because at init time the scale will always be 100
 		float x_pos = settings::window_width_h + settings::window_width_h * bodies[i].x / 100;
 		float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * bodies[i].y / 100;
-		shapes[i].setPosition(x_pos, y_pos);
+		shapes[i].setPosition({x_pos, y_pos});
 	}
 	
 	return shapes;
@@ -23,7 +23,7 @@ Scene::Scene(sf::RenderWindow& window_ref, std::vector<body>& bodies_ref, std::v
 	m_window_ref(window_ref), m_bodies_ref(bodies_ref), m_shapes_ref(shapes_ref), m_is_ref(is_ref), m_ss_ref(ss_ref)
 {
 
-	if (!m_font.loadFromFile("./data/fonts/routed-gothic.ttf"))
+	if (!m_font.openFromFile("./data/fonts/routed-gothic.ttf"))
 		exit(-1);
 	m_upper_left_text.setFont(m_font);
 	m_upper_left_text.setCharacterSize(12);
@@ -39,9 +39,9 @@ void Scene::update_shapes()
 	{
 		const float x_pos = settings::window_width_h + settings::window_width_h * (m_bodies_ref[i].x + m_is_ref.center_x) / (100 * m_is_ref.zoom);
 		const float y_pos = settings::window_height_h - settings::aspect_ratio * settings::window_height_h * (m_bodies_ref[i].y + m_is_ref.center_y) / (100 * m_is_ref.zoom);
-		m_shapes_ref[i].setPosition(x_pos, y_pos);
+		m_shapes_ref[i].setPosition({x_pos, y_pos});
 		const float radius = m_bodies_ref[i].m / (settings::mass_radius_factor * m_is_ref.zoom);
-		m_shapes_ref[i].setOrigin(radius, radius);
+		m_shapes_ref[i].setOrigin({radius, radius});
 		m_shapes_ref[i].setRadius(radius);
 		m_window_ref.draw(m_shapes_ref[i]);
 	}
@@ -87,8 +87,8 @@ SetupScene::SetupScene(sf::RenderWindow& window_ref, std::vector<body>& bodies_r
 	m_setup_text.setCharacterSize(14);
 	m_setup_text.setFillColor(sf::Color::Cyan);
 	m_setup_text.setString(m_settings_str);
-	m_setup_text.setOrigin(m_setup_text.getGlobalBounds().getSize() / 2.f + m_setup_text.getLocalBounds().getPosition());
-	m_setup_text.setPosition(settings::window_width_h, settings::window_height_h);
+	m_setup_text.setOrigin(m_setup_text.getGlobalBounds().size / 2.f + m_setup_text.getLocalBounds().position);
+	m_setup_text.setPosition({settings::window_width_h, settings::window_height_h});
 
 }
 
@@ -117,8 +117,8 @@ SetupSceneCircle::SetupSceneCircle(sf::RenderWindow& window_ref, std::vector<bod
 	m_setup_circle_text.setCharacterSize(14);
 	m_setup_circle_text.setFillColor(sf::Color::Cyan);
 	m_setup_circle_text.setString(m_settings_circle_str);
-	m_setup_circle_text.setOrigin(m_setup_circle_text.getGlobalBounds().getSize() / 2.f + m_setup_circle_text.getLocalBounds().getPosition());
-	m_setup_circle_text.setPosition(settings::window_width_h, 55);
+	m_setup_circle_text.setOrigin(m_setup_circle_text.getGlobalBounds().size / 2.f + m_setup_circle_text.getLocalBounds().position);
+	m_setup_circle_text.setPosition({settings::window_width_h, 55});
 
 	m_previous_size = bodies_ref.size();
 
@@ -167,8 +167,8 @@ SetupSceneUniform::SetupSceneUniform(sf::RenderWindow& window_ref, std::vector<b
 	m_setup_uniform_text.setCharacterSize(14);
 	m_setup_uniform_text.setFillColor(sf::Color::Cyan);
 	m_setup_uniform_text.setString(m_settings_uniform_str);
-	m_setup_uniform_text.setOrigin(m_setup_uniform_text.getGlobalBounds().getSize() / 2.f + m_setup_uniform_text.getLocalBounds().getPosition());
-	m_setup_uniform_text.setPosition(settings::window_width_h, 55);
+	m_setup_uniform_text.setOrigin(m_setup_uniform_text.getGlobalBounds().size / 2.f + m_setup_uniform_text.getLocalBounds().position);
+	m_setup_uniform_text.setPosition({settings::window_width_h, 55});
 
 	m_previous_size = bodies_ref.size();
 
@@ -217,8 +217,8 @@ SetupSceneNormal::SetupSceneNormal(sf::RenderWindow& window_ref, std::vector<bod
 	m_setup_normal_text.setCharacterSize(14);
 	m_setup_normal_text.setFillColor(sf::Color::Cyan);
 	m_setup_normal_text.setString(m_settings_normal_str);
-	m_setup_normal_text.setOrigin(m_setup_normal_text.getGlobalBounds().getSize() / 2.f + m_setup_normal_text.getLocalBounds().getPosition());
-	m_setup_normal_text.setPosition(settings::window_width_h, 55);
+	m_setup_normal_text.setOrigin(m_setup_normal_text.getGlobalBounds().size / 2.f + m_setup_normal_text.getLocalBounds().position);
+	m_setup_normal_text.setPosition({settings::window_width_h, 55});
 
 	m_previous_size = bodies_ref.size();
 
@@ -268,8 +268,8 @@ SetupSceneCustom::SetupSceneCustom(sf::RenderWindow& window_ref, std::vector<bod
 	m_setup_custom_text.setCharacterSize(14);
 	m_setup_custom_text.setFillColor(sf::Color::Cyan);
 	m_setup_custom_text.setString(m_settings_custom_str);
-	m_setup_custom_text.setOrigin(m_setup_custom_text.getGlobalBounds().getSize() / 2.f + m_setup_custom_text.getLocalBounds().getPosition());
-	m_setup_custom_text.setPosition(settings::window_width_h, 55);
+	m_setup_custom_text.setOrigin(m_setup_custom_text.getGlobalBounds().size / 2.f + m_setup_custom_text.getLocalBounds().position);
+	m_setup_custom_text.setPosition({settings::window_width_h, 55});
 
 	m_previous_size = bodies_ref.size();
 

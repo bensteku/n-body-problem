@@ -3,9 +3,11 @@
 #include <vector>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#ifdef __CUDACC__
+#include <thrust/device_vector.h>
+#include <thrust/sort.h>
+#endif
 #include <cmath>
-//#include <thrust/sort.h>
-
 #include "body.hpp"
 
 void process_bodies_cuda(std::vector<body>& bodies, body* d_bodies, float* d_interactions_x, float* d_interactions_y, const sim_settings& ss);
@@ -46,7 +48,7 @@ struct sort_help
 	size_t body;
 	size_t node;
 
-	bool operator<(const sort_help& other) const {
+	__host__ __device__ bool operator<(const sort_help& other) const {
 		return node < other.node;
 	}
 

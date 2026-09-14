@@ -21,7 +21,7 @@
 int main(int argc, char* argv[]) 
 {
 
-	sf::RenderWindow window(sf::VideoMode(settings::window_width, settings::window_height), "n body problem");
+	sf::RenderWindow window(sf::VideoMode({settings::window_width, settings::window_height}), "n body problem");
 	window.setFramerateLimit(settings::frame_rate_cap);
 
     #ifdef THREED

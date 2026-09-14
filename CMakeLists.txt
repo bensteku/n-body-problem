@@ -1,21 +1,24 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.25)
 project(n_body_problem)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# find SFML
+# find SFML 3.1.0; SFML_DIR may still be overridden from the environment or command line
 if (DEFINED ENV{SFML_DIR})
-	set(SFML_DIR $ENV{SFML_DIR})
+	set(SFML_DIR "$ENV{SFML_DIR}" CACHE PATH "SFML CMake package directory")
+else()
+	set(SFML_DIR "D:/Speicher/C++/SFML-3.1.0/lib/cmake/SFML" CACHE PATH "SFML CMake package directory")
 endif()
 set(SFML_STATIC_LIBRARIES TRUE)
-find_package(SFML 2.5 REQUIRED COMPONENTS graphics window)
+find_package(SFML 3.1 CONFIG REQUIRED COMPONENTS Graphics Window)
 
-file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.h" "src/*.hpp" "main.cpp" "src/*.cu")
+file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.h" "src/*.hpp" "main.cpp")
+file(GLOB_RECURSE CUDA_SOURCES "src/*.cu")
 
-add_executable(${PROJECT_NAME} ${SOURCES})
+add_executable(${PROJECT_NAME} ${SOURCES} ${CUDA_SOURCES})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE sfml-graphics sfml-window)
+target_link_libraries(${PROJECT_NAME} PRIVATE SFML::Graphics SFML::Window)
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 #target_compile_definitions(${PROJECT_NAME} PRIVATE USE_THREADS) # temporary
@@ -29,11 +32,16 @@ elseif (BUILD_VARIANT STREQUAL "CUDA")
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD 20)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES "native")
 
     find_package(CUDAToolkit REQUIRED)
 
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA)
     target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cudart)
+    set_source_files_properties(${CUDA_SOURCES} PROPERTIES LANGUAGE CUDA)
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>
+    )
     message(STATUS "Building with CUDA support")
 
     #if (DEFINED ENV{GLEW_DIR})
@@ -46,4 +54,3 @@ elseif (BUILD_VARIANT STREQUAL "CUDA")
 else()
     message(STATUS "Building default SISD configuration")
 endif()
-

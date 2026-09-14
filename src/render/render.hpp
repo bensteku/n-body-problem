@@ -74,7 +74,7 @@ class Scene
 
 
 		static inline sf::Font m_font;
-		static inline sf::Text m_upper_left_text;
+		static inline sf::Text m_upper_left_text{m_font};
 		static inline sf::Clock m_clock;
 
 		void render_fps_info();
@@ -91,7 +91,7 @@ class SetupScene : public Scene
 {
 
 	private:
-		sf::Text m_setup_text;
+		sf::Text m_setup_text{m_font};
 
 		static inline const std::string m_settings_str = \
 			"Press 1 to initialize bodies in a circle.\nPress 2 to initialize bodies uniformly random.\nPress 3 to initialize bodies in a random normal distribution.\nPress 4 to place bodies yourself.";
@@ -107,7 +107,7 @@ class SetupSceneCircle : public Scene
 {
 	
 	private:
-		sf::Text m_setup_circle_text;
+		sf::Text m_setup_circle_text{m_font};
 
 		const std::string m_settings_circle_str = \
 			"Click and hold to determine radius.\nHold d + scroll mouse wheel to change random deviation from circle.\nHold m + scroll mouse wheel to change max mass, n + scroll for min mass.\nHold b + scroll mouse wheel to change number of bodies.\nPress Enter to start simulation.";
@@ -125,7 +125,7 @@ class SetupSceneUniform : public Scene
 {
 
 	private:
-		sf::Text m_setup_uniform_text;
+		sf::Text m_setup_uniform_text{m_font};
 
 		 const std::string m_settings_uniform_str = \
 			"Hold d/c + scroll mouse wheel to change x/y range.\nHold m + scroll mouse wheel to change max mass, n + scroll for min mass.\nHold b + scroll mouse wheel to change number of bodies.\nPress Enter to start simulation.";
@@ -143,7 +143,7 @@ class SetupSceneNormal : public Scene
 {
 
 	private:
-		sf::Text m_setup_normal_text;
+		sf::Text m_setup_normal_text{m_font};
 
 		const std::string m_settings_normal_str = \
 			"Hold d/c + scroll mouse wheel to change x/y std.\nHold m + scroll mouse wheel to change max mass, n + scroll for min mass.\nHold b + scroll mouse wheel to change number of bodies.\nPress Enter to start simulation.";
@@ -161,7 +161,7 @@ class SetupSceneCustom : public Scene
 {
 
 	private:
-		sf::Text m_setup_custom_text;
+		sf::Text m_setup_custom_text{m_font};
 
 		const std::string m_settings_custom_str = \
 			"Click to add a body.\nHolding the click and scrolling allows to determine the body's mass.\nPress R to delete all bodies placed so far.\nPress Enter to start simulation.";

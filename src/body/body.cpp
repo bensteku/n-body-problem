@@ -843,8 +843,6 @@ void octree::calc_force_simd(body& test_body, sim_settings& ss)
 	}
 
 }
-#elif defined(USE_CUDA)
-
 #else
 void octree::calc_force(body& test_body, sim_settings& ss)
 {
@@ -855,7 +853,7 @@ void octree::calc_force(body& test_body, sim_settings& ss)
 	}
 
 	// if this node is a leaf and the test body is in its domain, we run the calculation as normal
-	// i.e. the O^2 algorithm
+	// i.e. the O(n^2) algorithm
 	if (is_leaf && in_bounds(&test_body))
 	{
 		for (const body*& it : bodies)
