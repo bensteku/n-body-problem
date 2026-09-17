@@ -2,10 +2,12 @@
 #include "simulation/solvers/scalar_full_solver.hpp"
 #include "simulation/solvers/scalar_barnes_hut_solver.hpp"
 #include "simulation/solvers/simd_full_solver.hpp"
+#include "simulation/solvers/simd_barnes_hut_solver.hpp"
 #include "simulation/collision_system.hpp"
 
 #include <chrono>
 #include <iostream>
+#include <string>
 #include <string_view>
 
 int main(int argc, char** argv) {
@@ -103,6 +105,36 @@ int main(int argc, char** argv) {
         const double scalar_ms = std::chrono::duration<double, std::milli>(scalar_elapsed).count();
         const double simd_ms = std::chrono::duration<double, std::milli>(simd_elapsed).count();
         std::cout << "SIMD comparison dimension=2D steps=" << steps
+                  << " bodies=" << body_count
+                  << " scalar_ms=" << scalar_ms << " simd_ms=" << simd_ms
+                  << " speedup=" << (simd_ms > 0.0 ? scalar_ms / simd_ms : 0.0)
+                  << " implementation=" << simd_solver.info(nbody::Dimension::Two).name << '\n';
+        return 0;
+    }
+
+    const bool simd_barnes_comparison = argc > 1 && std::string_view(argv[1]) == "compare-simd-bh";
+    if (simd_barnes_comparison) {
+        const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 2000;
+        const int steps = argc > 3 ? std::stoi(argv[3]) : 20;
+        nbody::WorldState scalar_world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
+        nbody::WorldState simd_world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
+        nbody::SimulationParameters parameters;
+        parameters.dimension = nbody::Dimension::Two;
+        parameters.gravitational_constant = 0.1;
+        parameters.timestep = 0.001;
+        parameters.collision.model = nbody::CollisionModel::Transparent;
+        parameters.solver.force_model = nbody::ForceModel::BarnesHut;
+        nbody::ScalarBarnesHutSolver scalar_solver;
+        nbody::SimdBarnesHutSolver simd_solver;
+        const auto scalar_start = std::chrono::steady_clock::now();
+        for (int step = 0; step < steps; ++step) scalar_solver.step(scalar_world, parameters);
+        const auto scalar_elapsed = std::chrono::steady_clock::now() - scalar_start;
+        const auto simd_start = std::chrono::steady_clock::now();
+        for (int step = 0; step < steps; ++step) simd_solver.step(simd_world, parameters);
+        const auto simd_elapsed = std::chrono::steady_clock::now() - simd_start;
+        const double scalar_ms = std::chrono::duration<double, std::milli>(scalar_elapsed).count();
+        const double simd_ms = std::chrono::duration<double, std::milli>(simd_elapsed).count();
+        std::cout << "SIMD Barnes-Hut comparison dimension=2D steps=" << steps
                   << " bodies=" << body_count
                   << " scalar_ms=" << scalar_ms << " simd_ms=" << simd_ms
                   << " speedup=" << (simd_ms > 0.0 ? scalar_ms / simd_ms : 0.0)

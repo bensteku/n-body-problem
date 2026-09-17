@@ -2,6 +2,7 @@
 #include "simulation/solver.hpp"
 #include "simulation/solvers/scalar_full_solver.hpp"
 #include "simulation/solvers/scalar_barnes_hut_solver.hpp"
+#include "simulation/solvers/simd_barnes_hut_solver.hpp"
 #include "simulation/solvers/simd_full_solver.hpp"
 
 #include <iostream>
@@ -30,7 +31,11 @@ int main(int argc, char** argv) {
     bool gpu_fallback = false;
 #ifdef NBODY_FORCE_MODEL_BARNES_HUT
     parameters.solver.force_model = nbody::ForceModel::BarnesHut;
+#ifdef NBODY_BACKEND_SIMD
+    solver = std::make_unique<nbody::SimdBarnesHutSolver>();
+#else
     solver = std::make_unique<nbody::ScalarBarnesHutSolver>();
+#endif
 #elif defined(NBODY_BACKEND_SIMD)
     parameters.solver.force_model = nbody::ForceModel::Full;
     solver = std::make_unique<nbody::SimdFullSolver>();

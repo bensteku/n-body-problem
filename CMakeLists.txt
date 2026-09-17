@@ -36,12 +36,16 @@ add_library(nbody_simulation
     src/simulation/solvers/scalar_barnes_hut_solver.cpp
     src/simulation/solvers/simd_full_solver.cpp
     src/simulation/solvers/simd_avx2_kernel.cpp
+    src/simulation/solvers/simd_barnes_hut_solver.cpp
+    src/simulation/solvers/simd_barnes_hut_kernel.cpp
 )
 target_include_directories(nbody_simulation PUBLIC ${CMAKE_SOURCE_DIR}/src)
 if (MSVC)
     set_source_files_properties(src/simulation/solvers/simd_avx2_kernel.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
+    set_source_files_properties(src/simulation/solvers/simd_barnes_hut_kernel.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/simulation/solvers/simd_avx2_kernel.cpp PROPERTIES COMPILE_OPTIONS "-mavx2")
+    set_source_files_properties(src/simulation/solvers/simd_barnes_hut_kernel.cpp PROPERTIES COMPILE_OPTIONS "-mavx2")
 endif()
 
 add_executable(nbody_app src/app/main.cpp)
