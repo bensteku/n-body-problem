@@ -25,6 +25,7 @@ endif()
 
 add_library(nbody_simulation
     src/simulation/world_state.cpp
+    src/simulation/solvers/scalar_full_solver.cpp
 )
 target_include_directories(nbody_simulation PUBLIC ${CMAKE_SOURCE_DIR}/src)
 

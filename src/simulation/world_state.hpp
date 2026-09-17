@@ -4,6 +4,7 @@
 #include "simulation_parameters.hpp"
 
 #include <cstddef>
+#include <span>
 #include <vector>
 
 namespace nbody {
@@ -21,9 +22,11 @@ public:
     Dimension dimension() const { return dimension_; }
     double time() const { return time_; }
     const std::vector<BodyState>& bodies() const { return bodies_; }
+    std::span<BodyState> mutableBodies() { return bodies_; }
 
     BodyId addBody(BodyState body);
     void advance(double timestep);
+    void advanceTime(double timestep) { time_ += timestep; }
     WorldDiagnostics diagnostics() const;
     bool isValid() const;
 

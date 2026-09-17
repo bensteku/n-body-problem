@@ -1,4 +1,5 @@
 #include "simulation/world_state.hpp"
+#include "simulation/solvers/scalar_full_solver.hpp"
 
 #include <cassert>
 
@@ -32,4 +33,36 @@ int main() {
     WorldState three_dimensional = WorldState::deterministic(2, Dimension::Three, 9);
     assert(three_dimensional.isValid());
     assert(three_dimensional.bodies()[0].position.z != 0.0 || three_dimensional.bodies()[0].velocity.z != 0.0);
+
+    SimulationParameters parameters;
+    parameters.gravitational_constant = 1.0;
+    parameters.timestep = 0.01;
+    parameters.softening_length = 0.0;
+
+    WorldState two_body(Dimension::Two);
+    two_body.addBody({{}, {-1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, 1.0, 0.1, false});
+    two_body.addBody({{}, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, 1.0, 0.1, false});
+    ScalarFullSolver solver;
+    solver.step(two_body, parameters);
+    assert(two_body.time() == parameters.timestep);
+    assert(two_body.bodies()[0].velocity.x > 0.0);
+    assert(two_body.bodies()[1].velocity.x < 0.0);
+    assert(two_body.bodies()[0].position.z == 0.0);
+    assert(two_body.isValid());
+
+    WorldState static_central(Dimension::Three);
+    static_central.addBody({{}, {0.0, 0.0, 0.0}, {}, 10.0, 0.1, true});
+    static_central.addBody({{}, {2.0, 0.0, 1.0}, {}, 1.0, 0.1, false});
+    parameters.dimension = Dimension::Three;
+    solver.step(static_central, parameters);
+    assert(static_central.bodies()[0].position == Vec3{});
+    assert(static_central.bodies()[1].velocity.x < 0.0);
+    assert(static_central.bodies()[1].velocity.z < 0.0);
+
+    WorldState coincident(Dimension::Three);
+    coincident.addBody({{}, {}, {}, 1.0, 0.1, false});
+    coincident.addBody({{}, {}, {}, 1.0, 0.1, false});
+    parameters.softening_length = 1e-3;
+    solver.step(coincident, parameters);
+    assert(coincident.diagnostics().finite);
 }
