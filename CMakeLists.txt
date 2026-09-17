@@ -25,15 +25,22 @@ endif()
 
 add_library(nbody_simulation
     src/simulation/boundary_system.cpp
+    src/simulation/barnes_hut_tree.cpp
+    src/simulation/body_storage.cpp
     src/simulation/collision_system.cpp
     src/simulation/material_properties.cpp
+    src/simulation/spatial_tree.cpp
     src/simulation/world_state.cpp
     src/simulation/solvers/scalar_full_solver.cpp
+    src/simulation/solvers/scalar_barnes_hut_solver.cpp
 )
 target_include_directories(nbody_simulation PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 add_executable(nbody_app src/app/main.cpp)
 target_link_libraries(nbody_app PRIVATE nbody_simulation)
+if (FORCE_MODEL STREQUAL "BaHu")
+    target_compile_definitions(nbody_app PRIVATE NBODY_FORCE_MODEL_BARNES_HUT=1)
+endif()
 
 add_executable(nbody_tests tests/simulation_tests.cpp)
 target_link_libraries(nbody_tests PRIVATE nbody_simulation)

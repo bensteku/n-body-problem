@@ -1,8 +1,10 @@
 #include "simulation/collision_system.hpp"
+#include "simulation/spatial_tree.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <stdexcept>
@@ -13,6 +15,30 @@ namespace nbody {
 
 namespace {
 
+struct CollisionWorkspace {
+    CollisionWorkspace(Dimension dimension, const CollisionBroadPhaseSettings& settings)
+        : tree(dimension, settings.leaf_capacity, settings.maximum_depth, settings.looseness),
+          leaf_capacity(settings.leaf_capacity), maximum_depth(settings.maximum_depth),
+          looseness(settings.looseness) {}
+
+    SpatialTree tree;
+    std::vector<std::pair<std::size_t, std::size_t>> candidate_pairs;
+    std::size_t leaf_capacity;
+    std::size_t maximum_depth;
+    double looseness;
+};
+
+CollisionWorkspace& collisionWorkspace(Dimension dimension, const CollisionBroadPhaseSettings& settings) {
+    thread_local std::unique_ptr<CollisionWorkspace> workspace;
+    if (!workspace || workspace->tree.dimension() != dimension
+        || workspace->leaf_capacity != settings.leaf_capacity
+        || workspace->maximum_depth != settings.maximum_depth
+        || workspace->looseness != settings.looseness) {
+        workspace = std::make_unique<CollisionWorkspace>(dimension, settings);
+    }
+    return *workspace;
+}
+
 CollisionOutcome classify(double specific_energy, double damage_limit, double fragmentation_limit,
                           double accumulated_damage, const CollisionClassifierSettings& settings) {
     if (settings.force_fragmentation || specific_energy >= fragmentation_limit) return CollisionOutcome::Fragment;
@@ -21,7 +47,8 @@ CollisionOutcome classify(double specific_energy, double damage_limit, double fr
     return CollisionOutcome::Bounce;
 }
 
-CollisionAssessment assessBody(const BodyState& body, double impact_energy,
+template <typename Body>
+CollisionAssessment assessBody(const Body& body, double impact_energy,
                                double gravitational_constant, const CollisionClassifierSettings& settings) {
     const double specific_energy = body.mass > 0.0 ? impact_energy / body.mass : 0.0;
     const double density = std::max(body.material.density, 1e-12);
@@ -52,7 +79,8 @@ void applyDeferredDamage(WorldState& world) {
         }
     }
 
-    for (BodyState& body : world.mutableBodies()) {
+    for (std::size_t index = 0; index < world.bodyCount(); ++index) {
+        MutableBodyView body = world.mutableBody(index);
         const auto damage = damage_by_body.find(body.id.value);
         if (damage != damage_by_body.end()) {
             body.accumulated_damage = std::clamp(body.accumulated_damage + damage->second, 0.0, 1.0);
@@ -107,10 +135,11 @@ void applyDeferredFragmentation(WorldState& world, const CollisionSettings& sett
 
     const std::size_t minimum = std::max<std::size_t>(2, settings.minimum_fragments);
     const std::size_t maximum = std::max(minimum, settings.maximum_fragments);
+    const std::vector<BodyState> current_bodies = world.snapshotBodies();
     std::vector<BodyState> replacement;
-    replacement.reserve(world.bodies().size() + fragment_ids.size() * minimum);
+    replacement.reserve(current_bodies.size() + fragment_ids.size() * minimum);
     std::size_t fragment_count_total = 0;
-    for (const BodyState& body : world.bodies()) {
+    for (const BodyState& body : current_bodies) {
         if (!fragment_ids.contains(body.id.value)) {
             replacement.push_back(body);
             continue;
@@ -140,14 +169,24 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
         // Transparent bodies deliberately receive no contact impulse or overlap correction.
         return;
     case CollisionModel::HardBody: {
-        auto bodies = world.mutableBodies();
         const Dimension dimension = world.dimension();
         const double restitution = std::clamp(settings.restitution, 0.0, 1.0);
+        CollisionWorkspace& workspace = collisionWorkspace(dimension, settings.broad_phase);
+        if (settings.broad_phase.spatial_tree_enabled) {
+            workspace.tree.rebuild(world.bodyStorage());
+            workspace.tree.potentialContactPairs(world.bodyStorage(), workspace.candidate_pairs);
+        } else {
+            workspace.candidate_pairs.clear();
+            for (std::size_t first = 0; first < world.bodyCount(); ++first) {
+                for (std::size_t second = first + 1; second < world.bodyCount(); ++second) {
+                    workspace.candidate_pairs.emplace_back(first, second);
+                }
+            }
+        }
 
-        for (std::size_t first = 0; first < bodies.size(); ++first) {
-            for (std::size_t second = first + 1; second < bodies.size(); ++second) {
-                BodyState& first_body = bodies[first];
-                BodyState& second_body = bodies[second];
+        for (const auto [first, second] : workspace.candidate_pairs) {
+                MutableBodyView first_body = world.mutableBody(first);
+                MutableBodyView second_body = world.mutableBody(second);
                 const Vec3 displacement = second_body.position - first_body.position;
                 const double distance_squared = displacement.lengthSquared(dimension);
                 const double combined_radius = first_body.radius + second_body.radius;
@@ -158,8 +197,8 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
                     ? displacement * (1.0 / distance)
                     : Vec3{1.0, 0.0, 0.0};
                 const double penetration = std::max(0.0, combined_radius - distance);
-                const double first_inverse_mass = first_body.is_static || first_body.mass <= 0.0 ? 0.0 : 1.0 / first_body.mass;
-                const double second_inverse_mass = second_body.is_static || second_body.mass <= 0.0 ? 0.0 : 1.0 / second_body.mass;
+                const double first_inverse_mass = first_body.is_static() || first_body.mass <= 0.0 ? 0.0 : 1.0 / first_body.mass;
+                const double second_inverse_mass = second_body.is_static() || second_body.mass <= 0.0 ? 0.0 : 1.0 / second_body.mass;
                 const double inverse_mass_sum = first_inverse_mass + second_inverse_mass;
 
                 if (inverse_mass_sum > 0.0 && penetration > 0.0) {
@@ -199,13 +238,12 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
                 const double effective_restitution = std::clamp(std::min(restitution, material_restitution), 0.0, 1.0);
                 const double impulse_magnitude = -(1.0 + effective_restitution) * normal_velocity / inverse_mass_sum;
                 const Vec3 impulse = normal * impulse_magnitude;
-                if (!first_body.is_static) first_body.velocity -= impulse * first_inverse_mass;
-                if (!second_body.is_static) second_body.velocity += impulse * second_inverse_mass;
+                if (!first_body.is_static()) first_body.velocity -= impulse * first_inverse_mass;
+                if (!second_body.is_static()) second_body.velocity += impulse * second_inverse_mass;
                 if (dimension == Dimension::Two) {
                     first_body.velocity.z = 0.0;
                     second_body.velocity.z = 0.0;
                 }
-            }
         }
         return;
     }

@@ -14,13 +14,14 @@ BodyId WorldState::addBody(BodyState body) {
         body.position.z = 0.0;
         body.velocity.z = 0.0;
     }
-    bodies_.push_back(body);
+    storage_.append(body);
     return body.id;
 }
 
 void WorldState::advance(double timestep) {
-    for (BodyState& body : bodies_) {
-        if (!body.is_static) {
+    for (std::size_t index = 0; index < storage_.size(); ++index) {
+        MutableBodyView body = storage_.mutableView(index);
+        if (!body.is_static()) {
             body.position += body.velocity * timestep;
             if (dimension_ == Dimension::Two) {
                 body.position.z = 0.0;
@@ -32,13 +33,22 @@ void WorldState::advance(double timestep) {
 }
 
 void WorldState::replaceBodies(std::vector<BodyState> bodies) {
-    bodies_ = std::move(bodies);
+    storage_.clear();
+    storage_.reserve(bodies.size());
+    for (BodyState body : bodies) {
+        if (dimension_ == Dimension::Two) {
+            body.position.z = 0.0;
+            body.velocity.z = 0.0;
+        }
+        storage_.append(body);
+    }
     std::uint64_t largest_id = 0;
-    for (const BodyState& body : bodies_) {
+    for (const BodyState& body : bodies) {
         if (body.id.value > largest_id) largest_id = body.id.value;
     }
     next_id_.value = largest_id + 1;
-    for (BodyState& body : bodies_) {
+    for (std::size_t index = 0; index < storage_.size(); ++index) {
+        MutableBodyView body = storage_.mutableView(index);
         if (!body.id.isValid()) {
             body.id = next_id_;
             ++next_id_.value;
@@ -49,7 +59,8 @@ void WorldState::replaceBodies(std::vector<BodyState> bodies) {
 WorldDiagnostics WorldState::diagnostics() const {
     WorldDiagnostics result;
     Vec3 weighted_position{};
-    for (const BodyState& body : bodies_) {
+    for (std::size_t index = 0; index < storage_.size(); ++index) {
+        ConstBodyView body = storage_.view(index);
         result.total_mass += body.mass;
         weighted_position += body.position * body.mass;
         result.finite = result.finite && body.position.isFinite() && body.velocity.isFinite();
@@ -62,7 +73,8 @@ WorldDiagnostics WorldState::diagnostics() const {
 
 bool WorldState::isValid() const {
     if (next_id_.value == 0) return false;
-    for (const BodyState& body : bodies_) {
+    for (std::size_t index = 0; index < storage_.size(); ++index) {
+        ConstBodyView body = storage_.view(index);
         if (!body.id.isValid() || body.mass < 0.0 || body.radius < 0.0
             || body.accumulated_damage < 0.0 || body.accumulated_damage > 1.0) return false;
         if (!body.position.isFinite() || !body.velocity.isFinite()) return false;
@@ -73,6 +85,7 @@ bool WorldState::isValid() const {
 
 WorldState WorldState::deterministic(std::size_t body_count, Dimension dimension, unsigned long long seed) {
     WorldState world(dimension);
+    world.reserveBodies(body_count);
     std::mt19937_64 generator(seed);
     std::uniform_real_distribution<double> position(-10.0, 10.0);
     std::uniform_real_distribution<double> velocity(-0.1, 0.1);

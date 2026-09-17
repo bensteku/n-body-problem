@@ -32,8 +32,9 @@ void BoundarySystem::resolve(WorldState& world, const BoundarySettings& settings
     const double restitution = std::clamp(settings.restitution, 0.0, 1.0);
     if (settings.response != BoundaryResponse::Reflective) return;
 
-    for (BodyState& body : world.mutableBodies()) {
-        if (body.is_static) continue;
+    for (std::size_t index = 0; index < world.bodyCount(); ++index) {
+        MutableBodyView body = world.mutableBody(index);
+        if (body.is_static()) continue;
         resolveAxis(body.position.x, body.velocity.x, body.radius,
                     settings.minimum.x, settings.maximum.x, restitution);
         resolveAxis(body.position.y, body.velocity.y, body.radius,

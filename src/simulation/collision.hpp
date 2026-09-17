@@ -37,6 +37,13 @@ struct CollisionAssessment {
     double fragmentation_limit{};
 };
 
+struct CollisionBroadPhaseSettings {
+    bool spatial_tree_enabled{true};
+    std::size_t leaf_capacity{16};
+    std::size_t maximum_depth{12};
+    double looseness{1.0};
+};
+
 struct CollisionEvent {
     BodyId first_body;
     BodyId second_body;
@@ -50,6 +57,7 @@ struct CollisionEvent {
 struct CollisionSettings {
     CollisionModel model{CollisionModel::Transparent};
     double restitution{1.0};
+    CollisionBroadPhaseSettings broad_phase;
     CollisionClassifierSettings classifier;
     std::size_t minimum_fragments{2};
     std::size_t maximum_fragments{5};
