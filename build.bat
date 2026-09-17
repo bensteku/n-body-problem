@@ -2,8 +2,8 @@
 setlocal EnableExtensions
 
 rem Simple entry point for all supported builds.
-rem Usage: build.bat [Scalar|SIMD|CUDA] [Full|BaHu]
-rem        build.bat legacy [Scalar|SIMD|CUDA] [Full|BaHu]
+rem Usage: build.bat [Scalar|SIMD|GPU] [Full|BaHu]
+rem        build.bat legacy [Scalar|SIMD|GPU] [Full|BaHu]
 
 if /I "%~1"=="legacy" goto legacy_args
 set "BUILD_MODE=greenfield"
@@ -24,9 +24,9 @@ if not defined FORCE_MODEL set "FORCE_MODEL=Full"
 
 if /I "%BACKEND%"=="Scalar" set "BACKEND=Scalar"
 if /I "%BACKEND%"=="SIMD" set "BACKEND=SIMD"
-if /I "%BACKEND%"=="CUDA" set "BACKEND=CUDA"
-if /I not "%BACKEND%"=="Scalar" if /I not "%BACKEND%"=="SIMD" if /I not "%BACKEND%"=="CUDA" (
-    echo ERROR: backend must be Scalar, SIMD, or CUDA.
+if /I "%BACKEND%"=="GPU" set "BACKEND=GPU"
+if /I not "%BACKEND%"=="Scalar" if /I not "%BACKEND%"=="SIMD" if /I not "%BACKEND%"=="GPU" (
+    echo ERROR: backend must be Scalar, SIMD, or GPU.
     exit /b 2
 )
 

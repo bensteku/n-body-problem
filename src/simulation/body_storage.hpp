@@ -42,18 +42,26 @@ public:
     void reserve(std::size_t count);
     void clear();
     void append(const BodyState& body);
+    void synchronizePositionComponents() const;
 
     ConstBodyView view(std::size_t index) const;
     MutableBodyView mutableView(std::size_t index);
     std::vector<BodyState> snapshot() const;
 
     const std::vector<Vec3>& positions() const { return positions_; }
+    const std::vector<double>& positionX() const { return position_x_; }
+    const std::vector<double>& positionY() const { return position_y_; }
+    const std::vector<double>& positionZ() const { return position_z_; }
     const std::vector<Vec3>& velocities() const { return velocities_; }
     const std::vector<double>& masses() const { return masses_; }
 
 private:
     // Hot simulation data: contiguous and isolated from material/editor state.
     std::vector<Vec3> positions_;
+    // Component views for vectorized force kernels.
+    mutable std::vector<double> position_x_;
+    mutable std::vector<double> position_y_;
+    mutable std::vector<double> position_z_;
     std::vector<Vec3> velocities_;
     std::vector<double> masses_;
     std::vector<double> radii_;

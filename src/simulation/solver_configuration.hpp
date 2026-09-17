@@ -4,7 +4,7 @@
 
 namespace nbody {
 
-enum class ComputeBackend { Scalar, SIMD, CUDA };
+enum class ComputeBackend { Scalar, SIMD, GPU };
 enum class ForceModel { Full, BarnesHut };
 
 struct BarnesHutSettings {

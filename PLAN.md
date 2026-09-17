@@ -16,7 +16,7 @@ The long-term application should support:
 
 - two- and three-dimensional Newtonian simulations;
 - runtime selection of full pairwise or Barnes–Hut-style spatial approximation;
-- runtime selection of scalar CPU, SIMD CPU, or CUDA computation;
+- runtime selection of scalar CPU, SIMD CPU, or Vulkan GPU computation;
 - interactive body creation, inspection, and editing;
 - configurable collision and boundary behavior;
 - material colors, luminosity, lighting, spin, and axial tilt;
@@ -36,7 +36,9 @@ The existing repository is not the foundation for this system. It is a source of
 - The primary compiler/toolchain is MSVC Build Tools.
 - The build must work from the command line through CMake and Ninja.
 - The Visual Studio IDE is not a project dependency.
-- CUDA builds use NVIDIA nvcc with the supported MSVC host toolchain.
+- Vulkan GPU builds use the Vulkan SDK and supported shader toolchain.
+- Vulkan is the settled native GPU API for both simulation compute and bespoke graphics.
+- Windowing/input may use a platform library, but GPU rendering and compute should share one Vulkan device and resource model.
 - The core simulation logic should remain portable C++ wherever practical.
 - Windows-specific code should be isolated to application, windowing, file-system, or platform integration layers.
 
@@ -46,7 +48,7 @@ The following choices should be runtime-selectable where technically sensible:
 
 - 2D versus 3D, during startup only;
 - full pairwise versus Barnes–Hut approximation;
-- scalar versus SIMD versus CUDA computation;
+- scalar versus SIMD versus Vulkan GPU computation;
 - collision behavior;
 - boundary behavior;
 - physics and numerical parameters;
@@ -59,7 +61,7 @@ The dimension cannot change once a simulation run has begun. Other solver choice
 
 The application should expose these six principal implementation choices:
 
-| Force calculation | Scalar CPU | SIMD CPU | CUDA |
+| Force calculation | Scalar CPU | SIMD CPU | Vulkan GPU |
 |---|---:|---:|---:|
 | Full pairwise | Required | Required | Required |
 | Barnes–Hut tree | Required | Required | Required |
@@ -114,7 +116,7 @@ In particular:
 - visual metadata should not be interleaved with positions, velocities, or masses unless measurements justify it;
 - temporary force and acceleration buffers should be reused rather than allocated per step;
 - storage should be organized to minimize cache misses, pointer chasing, and false sharing;
-- CUDA layouts should be designed for coalesced access rather than mirroring C++ object graphs;
+- GPU layouts should be designed for coalesced access rather than mirroring C++ object graphs;
 - data should be reordered for tree traversal or device processing when that improves locality, with stable IDs preserving domain identity;
 - allocations, ownership, and synchronization should be visible at subsystem boundaries.
 
@@ -157,10 +159,10 @@ Application
     └── Runtime-selected solver
         ├── Scalar full
         ├── SIMD full
-        ├── CUDA full
+        ├── Vulkan GPU full
         ├── Scalar Barnes–Hut
         ├── SIMD Barnes–Hut
-        └── CUDA Barnes–Hut
+        └── Vulkan GPU Barnes–Hut
 ~~~
 
 The renderer and UI communicate with the session through high-level commands and read-only views. The solver receives a simulation state and numerical configuration and returns an updated state or force/acceleration results.
@@ -197,9 +199,9 @@ src/
       scalar_barnes_hut.*
       simd_full.*
       simd_barnes_hut.*
-      cuda_full.cu
-      cuda_barnes_hut.cu
-      cuda_support.cuh
+      vulkan_gpu_full.*
+      vulkan_gpu_barnes_hut.*
+      vulkan_compute_support.*
 
     spatial/
       quadtree.*
@@ -260,7 +262,7 @@ tools/
   snapshot_inspector.*
 ~~~
 
-The exact UI and rendering libraries remain an implementation choice, but the current working direction is a lightweight native renderer such as raylib plus Dear ImGui, wrapped behind project-owned interfaces. The renderer layer should not expose raylib or ImGui types to simulation code.
+The exact UI library remains an implementation choice, but the native renderer is Vulkan-based, with a windowing/input library and optional Dear ImGui integration wrapped behind project-owned interfaces. The renderer layer should not expose Vulkan, windowing, or UI-library types to simulation code.
 
 ## 6. World state and data model
 
@@ -276,7 +278,7 @@ struct BodyId {
 };
 ~~~
 
-Storage may be reordered for SIMD, tree traversal, or CUDA, but body IDs must remain stable for:
+Storage may be reordered for SIMD, tree traversal, or GPU execution, but body IDs must remain stable for:
 
 - selection;
 - body lists;
@@ -352,7 +354,7 @@ struct BodyStorage {
 };
 ~~~
 
-The exact split between physical and visual arrays can be optimized later. SIMD and CUDA paths should not force the rest of the application to use backend-specific layouts.
+The exact split between physical and visual arrays can be optimized later. SIMD and Vulkan GPU paths should not force the rest of the application to use backend-specific layouts.
 
 The storage should be explicitly split into hot, warm, and cold data rather than treating every body field as equally important to every loop.
 
@@ -383,7 +385,7 @@ Potential implementation techniques include:
 - explicit padding or chunking to avoid false sharing in threaded paths;
 - backend-specific views over shared logical state;
 - compact integer masks instead of scattered boolean objects;
-- explicit permutation maps when tree/CUDA layouts reorder bodies.
+- explicit permutation maps when tree/GPU layouts reorder bodies.
 
 The editable world may offer a body-oriented façade, but that façade should be a view or command boundary over the dense storage rather than the storage used by the numerical loops.
 
@@ -568,7 +570,7 @@ Potential settings include:
 - maximum tree depth;
 - maximum bodies;
 - timestep policy;
-- CUDA block configuration, where exposing it is useful;
+- Vulkan GPU workgroup configuration, where exposing it is useful;
 - diagnostic frequency.
 
 Numeric settings should be editable in Edit Mode and recorded as parameter-change events.
@@ -1238,8 +1240,9 @@ Orbit fitting and stability assessment should use the diagnostics/analysis layer
 The exact API is open, but conceptually:
 
 ~~~cpp
-enum class ComputeBackend { Scalar, SIMD, CUDA };
+enum class ComputeBackend { Scalar, SIMD, GPU };
 enum class ForceModel { Full, BarnesHut };
+enum class GpuApi { Vulkan };
 
 struct SolverInfo {
     ComputeBackend backend;
@@ -1279,7 +1282,7 @@ Specialized code should cover:
 
 - scalar loops;
 - AVX/AVX2 packing and reduction;
-- CUDA kernels and device memory;
+- Vulkan GPU kernels and device memory;
 - quadtree/octree construction and traversal.
 
 The runtime factory maps a SolverConfig to the concrete implementation. Runtime polymorphism or a std::variant can be used internally; the choice should be made for maintainability rather than ideology.
@@ -1313,22 +1316,22 @@ pause or enter Edit Mode
 
 The dimension is not switchable after startup. A backend change must not alter physical state merely because the storage layout changes.
 
-### 19.4 CUDA availability
+### 19.4 Vulkan GPU availability
 
-The CUDA backend is compiled into the native executable when CUDA support is enabled in the build.
+The Vulkan GPU backend is compiled into the native executable when Vulkan support is enabled in the build.
 
 At runtime:
 
-- detect whether a usable CUDA device exists;
-- expose CUDA options only when available;
+- detect whether a usable Vulkan-capable GPU exists;
+- expose GPU options only when available;
 - show a clear unavailable status otherwise;
 - keep scalar/SIMD CPU paths usable.
 
-CUDA device allocations should be owned through RAII wrappers. Every CUDA API call should eventually have an error-checking policy.
+Vulkan device allocations should be owned through RAII wrappers. Every Vulkan API call should eventually have an error-checking policy.
 
 ## 20. Barnes–Hut implementation direction
 
-The CPU and CUDA trees should be designed as separate representations sharing conceptual behavior.
+The CPU and Vulkan GPU trees should be designed as separate representations sharing conceptual behavior.
 
 ### 20.1 CPU tree
 
@@ -1350,11 +1353,11 @@ The tree must define:
 - opening criterion/tolerance;
 - handling of the test body’s own containing node.
 
-### 20.2 CUDA tree
+### 20.2 Vulkan GPU tree
 
 Prefer a flat device-friendly node representation with explicit indices. Tree construction, body sorting, force traversal, and pointer ownership should be separated.
 
-The CUDA representation must define:
+The Vulkan GPU representation must define:
 
 - node count formula;
 - child indexing;
@@ -1364,7 +1367,7 @@ The CUDA representation must define:
 - maximum depth and allocation sizing;
 - behavior for empty and tiny worlds.
 
-The CUDA tree is not required to duplicate the CPU tree’s memory structure, only its mathematical force approximation.
+The Vulkan GPU tree is not required to duplicate the CPU tree’s memory structure, only its mathematical force approximation.
 
 ## 21. Benchmarking and data collection
 
@@ -1380,7 +1383,7 @@ When enabled, collect:
 - collision time;
 - boundary time;
 - rendering time;
-- CUDA kernel time;
+- Vulkan GPU kernel time;
 - host/device transfer time;
 - bodies per second;
 - simulated time per wall-clock second;
@@ -1468,7 +1471,7 @@ Transparent softening and artificial boundaries alter ideal conservation behavio
 For small deterministic scenarios:
 
 - compare SIMD against scalar;
-- compare CUDA against scalar;
+- compare Vulkan GPU against scalar;
 - compare Barnes–Hut against full pairwise;
 - compare 2D and 3D with z=0 where meaningful;
 - compare before/after solver switching.
@@ -1570,7 +1573,7 @@ This is a separate numerical research engine and should not be an implicit requi
 - Windows SDK;
 - CMake;
 - Ninja;
-- CUDA Toolkit for CUDA builds;
+- Vulkan SDK for Vulkan GPU builds;
 - chosen graphics/UI dependencies.
 
 ### 24.2 CMake structure
@@ -1582,7 +1585,7 @@ The final CMake project should use:
 - the main executable;
 - a benchmark executable;
 - test targets;
-- an optional CUDA feature controlled by a CMake option.
+- an optional Vulkan GPU feature controlled by a CMake option.
 
 Example conceptual targets:
 
@@ -1599,17 +1602,17 @@ Use CMakePresets.json for:
 - debug CPU;
 - release CPU;
 - release SIMD;
-- release CUDA;
+- release Vulkan GPU;
 - tests;
 - benchmarks.
 
 Presets should not depend on Visual Studio IDE project files or stale absolute build directories.
 
-### 24.3 CUDA build policy
+### 24.3 Vulkan GPU build policy
 
-CUDA should be enabled before CUDA sources are added to a target. .cu files are compilation units; .cuh files are headers and should not be built as standalone sources.
+Vulkan GPU support should be enabled before Vulkan sources and shaders are added to a target. Shader sources and host-side Vulkan wrappers should be built through the selected Vulkan toolchain.
 
-The CUDA architecture should eventually be explicit or configurable rather than always using the local machine’s native architecture, especially for distribution and benchmark reproducibility.
+The Vulkan GPU target architecture should eventually be explicit or configurable rather than always using the local machine’s native architecture, especially for distribution and benchmark reproducibility.
 
 ## 25. Implementation sequence
 
@@ -1786,11 +1789,11 @@ Implement:
 
 Deliverable: the full CPU implementation matrix is operational.
 
-### Phase 11 — CUDA full solver
+### Phase 11 — Vulkan GPU full solver
 
 Implement:
 
-- CUDA device state;
+- Vulkan device state;
 - GPU full pairwise computation;
 - explicit transfer timing;
 - state repacking;
@@ -1801,7 +1804,7 @@ Implement:
 
 Avoid a full N × N interaction matrix unless measurements demonstrate that it is appropriate. Prefer memory-efficient reductions or tiled force accumulation.
 
-Deliverable: CUDA full pairwise is usable and benchmarkable.
+Deliverable: Vulkan GPU full pairwise is usable and benchmarkable.
 
 ### Phase 12 — native 3D application
 
@@ -1832,7 +1835,7 @@ Implement:
 
 Deliverable: camera-based 3D creation is convenient while exact text entry remains available.
 
-### Phase 14 — CUDA Barnes–Hut
+### Phase 14 — Vulkan GPU Barnes–Hut
 
 Implement:
 
@@ -1841,7 +1844,7 @@ Implement:
 - body sorting and index ranges;
 - force traversal;
 - memory sizing and maximum depth;
-- CPU/CUDA accuracy comparison;
+- CPU/Vulkan GPU accuracy comparison;
 - runtime backend switching.
 
 Deliverable: all six required solver modes exist for 2D and 3D, subject to measured support and documented limitations.

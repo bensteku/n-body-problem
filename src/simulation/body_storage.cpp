@@ -12,6 +12,9 @@ BodyState MutableBodyView::snapshot() const {
 
 void BodyStorage::reserve(std::size_t count) {
     positions_.reserve(count);
+    position_x_.reserve(count);
+    position_y_.reserve(count);
+    position_z_.reserve(count);
     velocities_.reserve(count);
     masses_.reserve(count);
     radii_.reserve(count);
@@ -23,6 +26,9 @@ void BodyStorage::reserve(std::size_t count) {
 
 void BodyStorage::clear() {
     positions_.clear();
+    position_x_.clear();
+    position_y_.clear();
+    position_z_.clear();
     velocities_.clear();
     masses_.clear();
     radii_.clear();
@@ -34,6 +40,9 @@ void BodyStorage::clear() {
 
 void BodyStorage::append(const BodyState& body) {
     positions_.push_back(body.position);
+    position_x_.push_back(body.position.x);
+    position_y_.push_back(body.position.y);
+    position_z_.push_back(body.position.z);
     velocities_.push_back(body.velocity);
     masses_.push_back(body.mass);
     radii_.push_back(body.radius);
@@ -41,6 +50,19 @@ void BodyStorage::append(const BodyState& body) {
     ids_.push_back(body.id);
     materials_.push_back(body.material);
     accumulated_damage_.push_back(body.accumulated_damage);
+}
+
+void BodyStorage::synchronizePositionComponents() const {
+    if (position_x_.size() != positions_.size()) {
+        position_x_.resize(positions_.size());
+        position_y_.resize(positions_.size());
+        position_z_.resize(positions_.size());
+    }
+    for (std::size_t index = 0; index < positions_.size(); ++index) {
+        position_x_[index] = positions_[index].x;
+        position_y_[index] = positions_[index].y;
+        position_z_[index] = positions_[index].z;
+    }
 }
 
 ConstBodyView BodyStorage::view(std::size_t index) const {

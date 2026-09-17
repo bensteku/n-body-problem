@@ -1,6 +1,7 @@
 #include "simulation/world_state.hpp"
 #include "simulation/solvers/scalar_full_solver.hpp"
 #include "simulation/solvers/scalar_barnes_hut_solver.hpp"
+#include "simulation/solvers/simd_full_solver.hpp"
 #include "simulation/barnes_hut_tree.hpp"
 #include "simulation/spatial_tree.hpp"
 #include "test_support.hpp"
@@ -129,6 +130,22 @@ int main() {
     barnes_solver.step(barnes_world, barnes_parameters);
     for (std::size_t index = 0; index < full_world.bodyCount(); ++index) {
         assert((full_world.body(index).velocity - barnes_world.body(index).velocity).length(Dimension::Two) < 1e-5);
+    }
+
+    WorldState scalar_simd_reference = WorldState::deterministic(120, Dimension::Three, 131);
+    WorldState simd_world = WorldState::deterministic(120, Dimension::Three, 131);
+    SimulationParameters simd_parameters;
+    simd_parameters.dimension = Dimension::Three;
+    simd_parameters.gravitational_constant = 0.1;
+    simd_parameters.timestep = 1e-4;
+    simd_parameters.collision.model = CollisionModel::Transparent;
+    ScalarFullSolver scalar_reference_solver;
+    SimdFullSolver simd_solver;
+    scalar_reference_solver.step(scalar_simd_reference, simd_parameters);
+    simd_solver.step(simd_world, simd_parameters);
+    for (std::size_t index = 0; index < scalar_simd_reference.bodyCount(); ++index) {
+        assert((scalar_simd_reference.body(index).position - simd_world.body(index).position).length(Dimension::Three) < 1e-10);
+        assert((scalar_simd_reference.body(index).velocity - simd_world.body(index).velocity).length(Dimension::Three) < 1e-10);
     }
 
     WorldState three_dimensional = WorldState::deterministic(2, Dimension::Three, 9);

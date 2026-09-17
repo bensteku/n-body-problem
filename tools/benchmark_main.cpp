@@ -1,6 +1,7 @@
 #include "simulation/world_state.hpp"
 #include "simulation/solvers/scalar_full_solver.hpp"
 #include "simulation/solvers/scalar_barnes_hut_solver.hpp"
+#include "simulation/solvers/simd_full_solver.hpp"
 #include "simulation/collision_system.hpp"
 
 #include <chrono>
@@ -77,6 +78,35 @@ int main(int argc, char** argv) {
                   << " speedup=" << (barnes_ms > 0.0 ? full_ms / barnes_ms : 0.0)
                   << " full_contacts=" << full_world.collisionEvents().size()
                   << " barnes_hut_contacts=" << barnes_world.collisionEvents().size() << '\n';
+        return 0;
+    }
+
+    const bool simd_comparison = argc > 1 && std::string_view(argv[1]) == "compare-simd";
+    if (simd_comparison) {
+        constexpr std::size_t body_count = 2000;
+        constexpr int steps = 20;
+        nbody::WorldState scalar_world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
+        nbody::WorldState simd_world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
+        nbody::SimulationParameters parameters;
+        parameters.dimension = nbody::Dimension::Two;
+        parameters.gravitational_constant = 0.1;
+        parameters.timestep = 0.001;
+        parameters.collision.model = nbody::CollisionModel::Transparent;
+        nbody::ScalarFullSolver scalar_solver;
+        nbody::SimdFullSolver simd_solver;
+        const auto scalar_start = std::chrono::steady_clock::now();
+        for (int step = 0; step < steps; ++step) scalar_solver.step(scalar_world, parameters);
+        const auto scalar_elapsed = std::chrono::steady_clock::now() - scalar_start;
+        const auto simd_start = std::chrono::steady_clock::now();
+        for (int step = 0; step < steps; ++step) simd_solver.step(simd_world, parameters);
+        const auto simd_elapsed = std::chrono::steady_clock::now() - simd_start;
+        const double scalar_ms = std::chrono::duration<double, std::milli>(scalar_elapsed).count();
+        const double simd_ms = std::chrono::duration<double, std::milli>(simd_elapsed).count();
+        std::cout << "SIMD comparison dimension=2D steps=" << steps
+                  << " bodies=" << body_count
+                  << " scalar_ms=" << scalar_ms << " simd_ms=" << simd_ms
+                  << " speedup=" << (simd_ms > 0.0 ? scalar_ms / simd_ms : 0.0)
+                  << " implementation=" << simd_solver.info(nbody::Dimension::Two).name << '\n';
         return 0;
     }
 
