@@ -38,6 +38,9 @@ public:
     Vec3 accelerationOn(std::size_t target, const BodyStorage& bodies,
                         double gravitational_constant, double softening_length,
                         double opening_angle) const;
+    Vec3 accelerationOn(std::size_t target, const BodyStorage& bodies,
+                        double gravitational_constant, double softening_length,
+                        double opening_angle, std::vector<std::size_t>& traversal_stack) const;
 
 private:
     struct Node {
@@ -65,9 +68,6 @@ private:
     void subdivide(std::size_t node_index, const BodyStorage& bodies, std::size_t depth);
     void aggregate(std::size_t node_index, const BodyStorage& bodies);
     void packBodies(std::size_t node_index, const BodyStorage& bodies);
-    Vec3 accelerationFromNode(std::size_t node_index, std::size_t target, const Vec3& target_position,
-                              const BodyStorage& bodies, double gravitational_constant,
-                              double softening_squared, double opening_angle) const;
     bool containsPoint(const SpatialBounds& bounds, const Vec3& position) const;
     bool containsBody(const SpatialBounds& bounds, const Vec3& position) const;
     SpatialBounds childBounds(const SpatialBounds& bounds, std::size_t child) const;

@@ -153,52 +153,65 @@ SpatialBounds BarnesHutTree::childBounds(const SpatialBounds& bounds, std::size_
     return result;
 }
 
-Vec3 BarnesHutTree::accelerationFromNode(std::size_t node_index, std::size_t target, const Vec3& target_position,
-                                         const BodyStorage& bodies, double gravitational_constant,
-                                         double softening_squared, double opening_angle) const {
-    const Node& node = nodes_[node_index];
-    if (node.mass <= 0.0) return {};
-    const double distance_squared = (node.center_of_mass - target_position).lengthSquared(dimension_)
-        + softening_squared;
-    const double distance = std::sqrt(distance_squared);
-    const double extent = std::max({node.bounds.maximum.x - node.bounds.minimum.x,
-                                    node.bounds.maximum.y - node.bounds.minimum.y,
-                                    dimension_ == Dimension::Three
-                                        ? node.bounds.maximum.z - node.bounds.minimum.z : 0.0});
-    const bool target_inside = containsPoint(node.bounds, target_position);
-    if (node.child_count != 0 && !target_inside && distance > 0.0 && extent / distance < opening_angle) {
-        Vec3 displacement = node.center_of_mass - target_position;
-        if (distance_squared == 0.0) return {};
-        const double inverse_distance_cubed = 1.0 / (distance_squared * distance);
-        return displacement * (gravitational_constant * node.mass * inverse_distance_cubed);
-    }
-
-    Vec3 acceleration{};
-    for (const std::size_t body_index : node.bodies) {
-        if (body_index == target) continue;
-        const ConstBodyView body = bodies.view(body_index);
-        const Vec3 displacement = body.position - target_position;
-        const double body_distance_squared = displacement.lengthSquared(dimension_) + softening_squared;
-        if (body_distance_squared == 0.0) continue;
-        const double body_distance = std::sqrt(body_distance_squared);
-        acceleration += displacement * (gravitational_constant * body.mass
-            / (body_distance_squared * body_distance));
-    }
-    for (std::size_t child_index = 0; child_index < node.child_count; ++child_index) {
-        const std::size_t child = node.children[child_index];
-        acceleration += accelerationFromNode(child, target, target_position, bodies, gravitational_constant,
-                                              softening_squared, opening_angle);
-    }
-    return acceleration;
+Vec3 BarnesHutTree::accelerationOn(std::size_t target, const BodyStorage& bodies,
+                                   double gravitational_constant, double softening_length,
+                                   double opening_angle) const {
+    std::vector<std::size_t> traversal_stack;
+    traversal_stack.reserve(nodes_.size());
+    return accelerationOn(target, bodies, gravitational_constant, softening_length,
+                          opening_angle, traversal_stack);
 }
 
 Vec3 BarnesHutTree::accelerationOn(std::size_t target, const BodyStorage& bodies,
                                    double gravitational_constant, double softening_length,
-                                   double opening_angle) const {
+                                   double opening_angle,
+                                   std::vector<std::size_t>& traversal_stack) const {
     if (nodes_.empty()) return {};
-    return accelerationFromNode(0, target, bodies.view(target).position, bodies, gravitational_constant,
-                                softening_length * softening_length,
-                                std::max(0.0, opening_angle));
+    const Vec3 target_position = bodies.view(target).position;
+    const double softening_squared = softening_length * softening_length;
+    const double clamped_opening_angle = std::max(0.0, opening_angle);
+    if (traversal_stack.capacity() < nodes_.size()) traversal_stack.reserve(nodes_.size());
+    traversal_stack.clear();
+    traversal_stack.push_back(0);
+
+    Vec3 acceleration{};
+    while (!traversal_stack.empty()) {
+        const std::size_t node_index = traversal_stack.back();
+        traversal_stack.pop_back();
+        const Node& node = nodes_[node_index];
+        if (node.mass <= 0.0) continue;
+
+        const double distance_squared = (node.center_of_mass - target_position).lengthSquared(dimension_)
+            + softening_squared;
+        const double distance = std::sqrt(distance_squared);
+        const double extent = std::max({node.bounds.maximum.x - node.bounds.minimum.x,
+                                        node.bounds.maximum.y - node.bounds.minimum.y,
+                                        dimension_ == Dimension::Three
+                                            ? node.bounds.maximum.z - node.bounds.minimum.z : 0.0});
+        const bool target_inside = containsPoint(node.bounds, target_position);
+        if (node.child_count != 0 && !target_inside && distance > 0.0
+            && extent / distance < clamped_opening_angle) {
+            const Vec3 displacement = node.center_of_mass - target_position;
+            const double inverse_distance_cubed = 1.0 / (distance_squared * distance);
+            acceleration += displacement * (gravitational_constant * node.mass * inverse_distance_cubed);
+            continue;
+        }
+
+        for (const std::size_t body_index : node.bodies) {
+            if (body_index == target) continue;
+            const ConstBodyView body = bodies.view(body_index);
+            const Vec3 displacement = body.position - target_position;
+            const double body_distance_squared = displacement.lengthSquared(dimension_) + softening_squared;
+            if (body_distance_squared == 0.0) continue;
+            const double body_distance = std::sqrt(body_distance_squared);
+            acceleration += displacement * (gravitational_constant * body.mass
+                / (body_distance_squared * body_distance));
+        }
+        for (std::size_t child_index = node.child_count; child_index > 0; --child_index) {
+            traversal_stack.push_back(node.children[child_index - 1]);
+        }
+    }
+    return acceleration;
 }
 
 }

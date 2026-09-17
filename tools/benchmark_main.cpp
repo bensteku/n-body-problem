@@ -10,7 +10,57 @@
 #include <string>
 #include <string_view>
 
+namespace {
+
+template <typename Solver>
+int runIsolatedSolver(std::string_view label, std::size_t body_count, int steps,
+                      Solver& solver, nbody::ForceModel force_model) {
+    nbody::WorldState world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
+    nbody::SimulationParameters parameters;
+    parameters.dimension = nbody::Dimension::Two;
+    parameters.gravitational_constant = 0.1;
+    parameters.timestep = 0.001;
+    parameters.collision.model = nbody::CollisionModel::Transparent;
+    parameters.solver.force_model = force_model;
+
+    const auto start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) solver.step(world, parameters);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    const double elapsed_ms = std::chrono::duration<double, std::milli>(elapsed).count();
+    std::cout << "isolated solver=" << label
+              << " dimension=2D steps=" << steps
+              << " bodies=" << body_count
+              << " elapsed_ms=" << elapsed_ms
+              << " implementation=" << solver.info(nbody::Dimension::Two).name
+              << " finite=" << (world.diagnostics().finite ? "true" : "false") << '\n';
+    return world.isValid() ? 0 : 1;
+}
+
+}
+
 int main(int argc, char** argv) {
+    const std::string_view mode = argc > 1 ? std::string_view(argv[1]) : std::string_view{};
+    const bool isolated_mode = mode == "scalar-bh" || mode == "simd-bh"
+        || mode == "scalar-full" || mode == "simd-full";
+    if (isolated_mode) {
+        const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 2000;
+        const int steps = argc > 3 ? std::stoi(argv[3]) : 20;
+        if (mode == "scalar-bh") {
+            nbody::ScalarBarnesHutSolver solver;
+            return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::BarnesHut);
+        }
+        if (mode == "simd-bh") {
+            nbody::SimdBarnesHutSolver solver;
+            return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::BarnesHut);
+        }
+        if (mode == "scalar-full") {
+            nbody::ScalarFullSolver solver;
+            return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::Full);
+        }
+        nbody::SimdFullSolver solver;
+        return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::Full);
+    }
+
     const bool solver_comparison = argc > 1 && std::string_view(argv[1]) == "compare";
     if (solver_comparison) {
         constexpr std::size_t body_count = 2000;

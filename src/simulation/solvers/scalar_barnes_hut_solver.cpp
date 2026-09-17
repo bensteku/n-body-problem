@@ -25,7 +25,8 @@ void ScalarBarnesHutSolver::calculateAccelerations(const WorldState& world,
         if (world.body(index).is_static()) continue;
         output[index] = tree_->accelerationOn(index, world.bodyStorage(),
                                               parameters.gravitational_constant,
-                                              parameters.softening_length, opening_angle);
+                                              parameters.softening_length, opening_angle,
+                                              traversal_stack_);
     }
 }
 

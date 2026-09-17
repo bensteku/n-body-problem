@@ -18,6 +18,7 @@ private:
                                 std::vector<Vec3>& output) const;
     mutable std::vector<Vec3> initial_accelerations_;
     mutable std::vector<Vec3> final_accelerations_;
+    mutable std::vector<std::size_t> traversal_stack_;
     mutable std::unique_ptr<BarnesHutTree> tree_;
 };
 
