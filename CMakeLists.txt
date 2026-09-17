@@ -1,56 +1,45 @@
 cmake_minimum_required(VERSION 3.25)
-project(n_body_problem)
+project(n_body_problem LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# find SFML 3.1.0; SFML_DIR may still be overridden from the environment or command line
-if (DEFINED ENV{SFML_DIR})
-	set(SFML_DIR "$ENV{SFML_DIR}" CACHE PATH "SFML CMake package directory")
-else()
-	set(SFML_DIR "D:/Speicher/C++/SFML-3.1.0/lib/cmake/SFML" CACHE PATH "SFML CMake package directory")
+set(BUILD_MODE "greenfield" CACHE STRING "Build family: greenfield or legacy")
+set(BUILD_VARIANT "Scalar" CACHE STRING "Compute backend: Scalar, SIMD, or CUDA")
+set(FORCE_MODEL "Full" CACHE STRING "Force calculation: Full or BaHu")
+
+if (BUILD_MODE STREQUAL "legacy")
+    add_subdirectory(legacy)
+    return()
 endif()
-set(SFML_STATIC_LIBRARIES TRUE)
-find_package(SFML 3.1 CONFIG REQUIRED COMPONENTS Graphics Window)
 
-file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.h" "src/*.hpp" "main.cpp")
-file(GLOB_RECURSE CUDA_SOURCES "src/*.cu")
-
-add_executable(${PROJECT_NAME} ${SOURCES} ${CUDA_SOURCES})
-
-target_link_libraries(${PROJECT_NAME} PRIVATE SFML::Graphics SFML::Window)
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
-#target_compile_definitions(${PROJECT_NAME} PRIVATE USE_THREADS) # temporary
-target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OCTREE) # temporary
-
-# Check for custom build variants
-if (BUILD_VARIANT STREQUAL "SIMD")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SIMD)
-    message(STATUS "Building with SIMD support")
-elseif (BUILD_VARIANT STREQUAL "CUDA")
-    enable_language(CUDA)
-    set(CMAKE_CUDA_STANDARD 20)
-    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-    set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES "native")
-
-    find_package(CUDAToolkit REQUIRED)
-
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA)
-    target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cudart)
-    set_source_files_properties(${CUDA_SOURCES} PROPERTIES LANGUAGE CUDA)
-    target_compile_options(${PROJECT_NAME} PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>
-    )
-    message(STATUS "Building with CUDA support")
-
-    #if (DEFINED ENV{GLEW_DIR})
-    #    set(GLEW_DIR $ENV{GLEW_DIR})
-    #endif()
-    #target_link_directories(${PROJECT_NAME} PRIVATE ${GLEW_DIR}/lib)
-    #target_include_directories(${PROJECT_NAME} PRIVATE ${GLEW_DIR}/include)
-    #target_link_libraries(${PROJECT_NAME} PRIVATE glew32s)
-
-else()
-    message(STATUS "Building default SISD configuration")
+if (NOT BUILD_MODE STREQUAL "greenfield")
+    message(FATAL_ERROR "BUILD_MODE must be greenfield or legacy (got '${BUILD_MODE}')")
 endif()
+if (NOT BUILD_VARIANT MATCHES "^(Scalar|SIMD|CUDA)$")
+    message(FATAL_ERROR "BUILD_VARIANT must be Scalar, SIMD, or CUDA (got '${BUILD_VARIANT}')")
+endif()
+if (NOT FORCE_MODEL MATCHES "^(Full|BaHu)$")
+    message(FATAL_ERROR "FORCE_MODEL must be Full or BaHu (got '${FORCE_MODEL}')")
+endif()
+
+add_library(nbody_simulation
+    src/simulation/world_state.cpp
+)
+target_include_directories(nbody_simulation PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+add_executable(nbody_app src/app/main.cpp)
+target_link_libraries(nbody_app PRIVATE nbody_simulation)
+
+add_executable(nbody_tests tests/simulation_tests.cpp)
+target_link_libraries(nbody_tests PRIVATE nbody_simulation)
+
+add_executable(nbody_benchmark tools/benchmark_main.cpp)
+target_link_libraries(nbody_benchmark PRIVATE nbody_simulation)
+
+enable_testing()
+add_test(NAME nbody_simulation_tests COMMAND nbody_tests)
+
+message(STATUS "Building greenfield targets")
+message(STATUS "Requested backend: ${BUILD_VARIANT}")
+message(STATUS "Requested force model: ${FORCE_MODEL}")

@@ -892,6 +892,38 @@ The body details window should allow choosing a comparison body through:
 
 Changing the comparison body should not change the globally selected reference unless explicitly requested.
 
+### 13.5 Recent trajectory trails
+
+The renderer should optionally display a recent trajectory trail for each body. A trail is a visual history of the body's movement, not additional physical state and not a replacement for saved simulation snapshots.
+
+The feature should provide:
+
+- a global enable/disable setting, with an optional per-body visibility override;
+- a configurable history duration or sample count;
+- a configurable sampling/decimation policy so large simulations do not allocate unbounded history;
+- a line or ribbon following the recent path;
+- a fade toward the oldest end of the trail, ending transparently;
+- sensible handling of body creation, deletion, teleportation, origin rebasing, and solver switching;
+- a clear indication when the trail has been invalidated or restarted after a discontinuity.
+
+Trajectory history belongs to presentation/diagnostic state. It should be maintained in a bounded ring buffer keyed by stable `BodyId` and should not affect force calculations, integration, or benchmark correctness.
+
+### 13.6 Stable and periodic orbit visualization
+
+The application should optionally assess whether a body's recent trajectory is sufficiently bounded, stable, and periodic to justify displaying an estimated orbit. This is an analysis feature, not a claim that the underlying motion is an exact Keplerian orbit.
+
+For a selected body and reference, the analysis may use a rolling observation window and evaluate:
+
+- whether the body remains bounded relative to the reference;
+- whether orbital energy, angular momentum, and orbital-plane orientation remain sufficiently consistent;
+- whether the trajectory returns near a prior position/velocity phase after a plausible period;
+- whether the fitted orbital parameters remain stable across multiple windows;
+- whether perturbations from other bodies make the estimate too uncertain.
+
+When confidence is high enough, the renderer may show a predicted or fitted orbit, such as an ellipse in the estimated orbital plane, alongside the measured recent trail. The display should distinguish measured path from estimated continuation and should show no orbit, or mark it as uncertain, when the evidence is insufficient.
+
+The analysis must tolerate non-Keplerian but periodic motion where practical, while clearly labeling approximations. It should expose thresholds, confidence, observation-window details, and invalidation conditions for diagnostics and reproducible comparisons. Orbit assessment must be bounded in cost and must not run inside the hot force-calculation loop.
+
 ## 14. Body editing and linked properties
 
 ### 14.1 Body property window
@@ -1141,6 +1173,21 @@ L = Σ (r × p)
 ~~~
 
 The UI should describe this as an approximation when the system does not have a single stable orbital plane.
+
+### 18.4 Trajectory and orbit overlays
+
+Trajectory trails and orbit overlays should be independently toggleable from the grid and reference-plane presentation. A trail shows where the body has recently been; an orbit overlay shows an assessed, fitted, or predicted path and must not be presented as measured data.
+
+The overlay system should support:
+
+- recent-path trails with age-based fading;
+- selected-body and all-body display modes;
+- estimated orbital ellipses or other supported periodic-orbit curves;
+- visual distinction between measured trail, fitted orbit, and uncertain/incomplete analysis;
+- reference-plane and orbital-plane alignment;
+- reset/restart behavior after discontinuities or insufficient history.
+
+Orbit fitting and stability assessment should use the diagnostics/analysis layer, publish read-only results to rendering, and remain independent of the selected force backend.
 
 ## 19. Runtime solver architecture
 
@@ -1652,8 +1699,11 @@ Implement:
 - equatorial ring;
 - prime-meridian marker;
 - three-color debug surface pattern.
+- bounded recent-trajectory history with age-based fading;
+- trajectory trail rendering for selected bodies and an all-body mode;
+- initial orbit-analysis data model and diagnostics for bounded/periodic motion.
 
-Deliverable: users can understand spatial, orbital, and rotational state visually.
+Deliverable: users can understand spatial, orbital, and rotational state visually, including recent movement and the confidence of any displayed orbit estimate.
 
 ### Phase 8 — SIMD full solver
 
@@ -1779,8 +1829,12 @@ Implement:
 - text-defined plane orientation;
 - aggregate and selected-body orbital-plane estimate;
 - orrery visualization controls.
+- bounded trajectory trails with configurable duration, sampling, and fading;
+- rolling orbit-stability and periodicity assessment outside the solver hot loop;
+- fitted/predicted elliptical orbit overlays when confidence thresholds are met;
+- diagnostics explaining the observation window, fit, confidence, and invalidation state.
 
-Deliverable: spatial relationships and orbital geometry can be explored interactively.
+Deliverable: spatial relationships, recent trajectories, and sufficiently stable/periodic orbital geometry can be explored interactively without confusing estimates with measured paths.
 
 ### Phase 17 — heuristic collisions and body lifecycle
 
@@ -1868,6 +1922,10 @@ These are design questions, not blockers for beginning the rebuild:
 - snapshot file format;
 - exact post-Newtonian approximation;
 - whether an average orbital plane should use all bodies, selected bodies, or a mass threshold.
+- trajectory-history storage format and sampling/decimation policy;
+- orbit-stability and periodicity metrics, thresholds, and confidence presentation;
+- whether fitted orbits should be restricted initially to two-body-like elliptical cases;
+- behavior of trajectory and orbit overlays after origin rebasing or solver switching.
 
 The implementation should document decisions as they are made rather than treating this draft as immutable.
 

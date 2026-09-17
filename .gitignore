@@ -363,3 +363,5 @@ MigrationBackup/
 FodyWeavers.xsd
 /n-body-problem.exe
 /n_body_problem.zip
+/build/
+/.build/
