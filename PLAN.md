@@ -630,7 +630,7 @@ Future collision outcomes may include:
 - solid + solid: merge, partial fragmentation, or a configurable heuristic;
 - small solid + large body: large body gains most mass and loses a small amount as ejecta;
 - solid + gas/star body: solid body is absorbed and the non-solid body gains its mass;
-- fragmentation: a small body splits into a random number between 2 and 5 fragments whose total mass approximately equals the original;
+- fragmentation: a body splits into a deterministic or seeded count between configurable minimum and maximum fragment counts (defaulting to 2–5), subject to a configurable per-step fragment cap; total mass approximately equals the original;
 - conservation of mass and approximate conservation of momentum.
 
 Body creation/removal must occur in a deferred mutation phase. A solver or collision loop must never invalidate its own iteration by directly resizing body storage.
@@ -1888,7 +1888,8 @@ Implement:
 - fragmentation;
 - stable ID creation/removal;
 - conservation diagnostics;
-- configurable fragment caps;
+- configurable minimum and maximum fragments per collision;
+- configurable total fragment cap per mutation phase;
 - deferred mutation and replay support.
 
 Deliverable: visually interesting collision outcomes without pretending to perform full material-disintegration simulation.

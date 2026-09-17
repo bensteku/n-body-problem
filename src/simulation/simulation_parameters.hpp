@@ -2,6 +2,7 @@
 
 #include "dimension.hpp"
 #include "collision.hpp"
+#include "boundary.hpp"
 #include "solver_configuration.hpp"
 
 namespace nbody {
@@ -17,6 +18,7 @@ struct SimulationParameters {
     unsigned long long seed{1};
     SolverConfiguration solver;
     CollisionSettings collision;
+    BoundarySettings boundary;
 };
 
 }

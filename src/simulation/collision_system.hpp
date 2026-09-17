@@ -7,7 +7,8 @@ namespace nbody {
 
 class CollisionSystem {
 public:
-    static void resolve(WorldState& world, const CollisionSettings& settings);
+    static void resolveContacts(WorldState& world, const CollisionSettings& settings, double gravitational_constant);
+    static void applyDeferredOutcomes(WorldState& world, const CollisionSettings& settings);
 };
 
 }

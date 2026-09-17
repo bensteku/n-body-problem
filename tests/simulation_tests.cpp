@@ -91,6 +91,9 @@ int main() {
     assert(hard_body.bodies()[1].position.x == 0.75);
     assert(hard_body.bodies()[0].velocity.x == -1.0);
     assert(hard_body.bodies()[1].velocity.x == 1.0);
+    assert(hard_body.collisionEvents().size() == 1);
+    assert(hard_body.collisionEvents()[0].first.outcome == CollisionOutcome::Bounce);
+    assert(hard_body.collisionEvents()[0].second.outcome == CollisionOutcome::Bounce);
 
     WorldState static_collision(Dimension::Three);
     static_collision.addBody({{}, {0.0, 0.0, 0.0}, {}, 10.0, 1.0, true});
@@ -103,6 +106,60 @@ int main() {
     assert(static_collision.bodies()[1].position.x >= 2.0 - 1e-12);
     assert(static_collision.bodies()[1].velocity.x > 0.0);
     assert(static_collision.isValid());
+    assert(static_collision.collisionEvents().size() == 1);
+    assert(static_collision.collisionEvents()[0].first.outcome == CollisionOutcome::Bounce);
+    assert(static_collision.collisionEvents()[0].second.outcome == CollisionOutcome::Bounce);
+
+    WorldState fragmenting(Dimension::Two);
+    fragmenting.addBody({{}, {-0.5, 0.0, 0.0}, {1.0, 0.0, 0.0}, 8.0, 1.0, false});
+    fragmenting.addBody({{}, {0.5, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 4.0, 1.0, false});
+    parameters.dimension = Dimension::Two;
+    parameters.timestep = 0.0;
+    parameters.collision.minimum_fragments = 3;
+    parameters.collision.maximum_fragments = 3;
+    parameters.collision.maximum_fragment_count = 32;
+    parameters.collision.classifier.force_fragmentation = true;
+    solver.step(fragmenting, parameters);
+    assert(fragmenting.bodies().size() == 6);
+    double fragment_mass = 0.0;
+    for (const BodyState& body : fragmenting.bodies()) fragment_mass += body.mass;
+    assert(std::abs(fragment_mass - 12.0) < 1e-12);
+    assert(fragmenting.isValid());
+
+    WorldState damaged(Dimension::Two);
+    damaged.addBody({{}, {-0.5, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 0.75, false});
+    damaged.addBody({{}, {0.5, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 0.75, false});
+    parameters.collision.classifier.force_fragmentation = false;
+    parameters.collision.classifier.force_damage = true;
+    parameters.collision.minimum_fragments = 2;
+    parameters.collision.maximum_fragments = 2;
+    parameters.timestep = 0.0;
+    solver.step(damaged, parameters);
+    assert(damaged.bodies().size() == 2);
+    assert(damaged.bodies()[0].accumulated_damage > 0.0);
+    assert(damaged.bodies()[1].accumulated_damage > 0.0);
+    assert(damaged.isValid());
+
+    WorldState bounded(Dimension::Two);
+    bounded.addBody({{}, {-0.75, 0.0, 0.0}, {-2.0, 0.0, 0.0}, 1.0, 0.5, false});
+    parameters.dimension = Dimension::Two;
+    parameters.collision.model = CollisionModel::Transparent;
+    parameters.boundary.enabled = true;
+    parameters.boundary.minimum = {-1.0, -1.0, -1.0};
+    parameters.boundary.maximum = {1.0, 1.0, 1.0};
+    parameters.boundary.restitution = 0.5;
+    parameters.timestep = 0.0;
+    solver.step(bounded, parameters);
+    assert(bounded.bodies()[0].position.x == -0.5);
+    assert(bounded.bodies()[0].velocity.x == 1.0);
+    assert(bounded.bodies()[0].position.z == 0.0);
+
+    WorldState unbounded(Dimension::Two);
+    unbounded.addBody({{}, {-2.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 0.5, false});
+    parameters.boundary.enabled = false;
+    solver.step(unbounded, parameters);
+    assert(unbounded.bodies()[0].position.x == -2.0);
+    assert(unbounded.bodies()[0].velocity.x == -1.0);
 
     const MaterialProperties rocky = materialPreset(MaterialPreset::Rocky);
     const MaterialProperties metallic = materialPreset(MaterialPreset::Metallic);

@@ -24,6 +24,7 @@ if (NOT FORCE_MODEL MATCHES "^(Full|BaHu)$")
 endif()
 
 add_library(nbody_simulation
+    src/simulation/boundary_system.cpp
     src/simulation/collision_system.cpp
     src/simulation/material_properties.cpp
     src/simulation/world_state.cpp

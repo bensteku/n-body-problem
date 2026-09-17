@@ -1,5 +1,6 @@
 #include "simulation/solvers/scalar_full_solver.hpp"
 #include "simulation/collision_system.hpp"
+#include "simulation/boundary_system.hpp"
 
 #include <cmath>
 #include <vector>
@@ -55,7 +56,9 @@ void ScalarFullSolver::step(WorldState& world, const SimulationParameters& param
         if (parameters.dimension == Dimension::Two) body.velocity.z = 0.0;
     }
 
-    CollisionSystem::resolve(world, parameters.collision);
+    CollisionSystem::resolveContacts(world, parameters.collision, parameters.gravitational_constant);
+    BoundarySystem::resolve(world, parameters.boundary);
+    CollisionSystem::applyDeferredOutcomes(world, parameters.collision);
     world.advanceTime(timestep);
 }
 

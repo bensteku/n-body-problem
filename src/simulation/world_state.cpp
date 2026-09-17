@@ -1,6 +1,7 @@
 #include "simulation/world_state.hpp"
 
 #include <random>
+#include <utility>
 
 namespace nbody {
 
@@ -30,6 +31,21 @@ void WorldState::advance(double timestep) {
     time_ += timestep;
 }
 
+void WorldState::replaceBodies(std::vector<BodyState> bodies) {
+    bodies_ = std::move(bodies);
+    std::uint64_t largest_id = 0;
+    for (const BodyState& body : bodies_) {
+        if (body.id.value > largest_id) largest_id = body.id.value;
+    }
+    next_id_.value = largest_id + 1;
+    for (BodyState& body : bodies_) {
+        if (!body.id.isValid()) {
+            body.id = next_id_;
+            ++next_id_.value;
+        }
+    }
+}
+
 WorldDiagnostics WorldState::diagnostics() const {
     WorldDiagnostics result;
     Vec3 weighted_position{};
@@ -47,7 +63,8 @@ WorldDiagnostics WorldState::diagnostics() const {
 bool WorldState::isValid() const {
     if (next_id_.value == 0) return false;
     for (const BodyState& body : bodies_) {
-        if (!body.id.isValid() || body.mass < 0.0 || body.radius < 0.0) return false;
+        if (!body.id.isValid() || body.mass < 0.0 || body.radius < 0.0
+            || body.accumulated_damage < 0.0 || body.accumulated_damage > 1.0) return false;
         if (!body.position.isFinite() || !body.velocity.isFinite()) return false;
         if (dimension_ == Dimension::Two && (body.position.z != 0.0 || body.velocity.z != 0.0)) return false;
     }

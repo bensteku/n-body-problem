@@ -14,6 +14,7 @@ struct BodyState {
     double radius{1.0};
     bool is_static{false};
     MaterialProperties material;
+    double accumulated_damage{0.0};
 };
 
 }

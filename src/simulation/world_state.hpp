@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace nbody {
@@ -22,7 +23,11 @@ public:
     Dimension dimension() const { return dimension_; }
     double time() const { return time_; }
     const std::vector<BodyState>& bodies() const { return bodies_; }
+    const std::vector<CollisionEvent>& collisionEvents() const { return collision_events_; }
     std::span<BodyState> mutableBodies() { return bodies_; }
+    void clearCollisionEvents() { collision_events_.clear(); }
+    void recordCollisionEvent(CollisionEvent event) { collision_events_.push_back(event); }
+    void replaceBodies(std::vector<BodyState> bodies);
 
     BodyId addBody(BodyState body);
     void advance(double timestep);
@@ -37,6 +42,7 @@ private:
     double time_{};
     BodyId next_id_{1};
     std::vector<BodyState> bodies_;
+    std::vector<CollisionEvent> collision_events_;
 };
 
 }
