@@ -49,18 +49,6 @@ void BarnesHutTree::rebuild(const BodyStorage& bodies) {
     packBodies(0, bodies);
 }
 
-BarnesHutTree::NodeView BarnesHutTree::node(std::size_t index) const {
-    const Node& value = nodes_[index];
-    return {value.bounds, value.children, value.child_count,
-            std::span<const std::size_t>(value.bodies.data(), value.bodies.size()),
-            std::span<const std::size_t>(packed_indices_.data() + value.packed_offset, value.bodies.size()),
-            std::span<const double>(packed_x_.data() + value.packed_offset, value.bodies.size()),
-            std::span<const double>(packed_y_.data() + value.packed_offset, value.bodies.size()),
-            std::span<const double>(packed_z_.data() + value.packed_offset, value.bodies.size()),
-            std::span<const double>(packed_masses_.data() + value.packed_offset, value.bodies.size()),
-            value.mass, value.center_of_mass};
-}
-
 void BarnesHutTree::insert(std::size_t node_index, std::size_t body_index,
                             const BodyStorage& bodies, std::size_t depth) {
     if (nodes_[node_index].child_count == 0) {
