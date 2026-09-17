@@ -65,4 +65,56 @@ int main() {
     parameters.softening_length = 1e-3;
     solver.step(coincident, parameters);
     assert(coincident.diagnostics().finite);
+
+    WorldState transparent(Dimension::Two);
+    transparent.addBody({{}, {-0.25, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 1.0, false});
+    transparent.addBody({{}, {0.25, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 1.0, false});
+    parameters.dimension = Dimension::Two;
+    parameters.gravitational_constant = 0.0;
+    parameters.timestep = 0.5;
+    parameters.softening_length = 0.0;
+    parameters.collision.model = CollisionModel::Transparent;
+    solver.step(transparent, parameters);
+    assert(transparent.bodies()[0].position.x == 0.25);
+    assert(transparent.bodies()[1].position.x == -0.25);
+    assert(transparent.bodies()[0].velocity.x == 1.0);
+    assert(transparent.bodies()[1].velocity.x == -1.0);
+
+    WorldState hard_body(Dimension::Two);
+    hard_body.addBody({{}, {-0.5, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 0.75, false});
+    hard_body.addBody({{}, {0.5, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 0.75, false});
+    parameters.collision.model = CollisionModel::HardBody;
+    parameters.collision.restitution = 1.0;
+    parameters.timestep = 0.0;
+    solver.step(hard_body, parameters);
+    assert(hard_body.bodies()[0].position.x == -0.75);
+    assert(hard_body.bodies()[1].position.x == 0.75);
+    assert(hard_body.bodies()[0].velocity.x == -1.0);
+    assert(hard_body.bodies()[1].velocity.x == 1.0);
+
+    WorldState static_collision(Dimension::Three);
+    static_collision.addBody({{}, {0.0, 0.0, 0.0}, {}, 10.0, 1.0, true});
+    static_collision.addBody({{}, {0.5, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 1.0, false});
+    parameters.dimension = Dimension::Three;
+    parameters.collision.restitution = 0.5;
+    parameters.timestep = 0.0;
+    solver.step(static_collision, parameters);
+    assert(static_collision.bodies()[0].position == Vec3{});
+    assert(static_collision.bodies()[1].position.x >= 2.0 - 1e-12);
+    assert(static_collision.bodies()[1].velocity.x > 0.0);
+    assert(static_collision.isValid());
+
+    const MaterialProperties rocky = materialPreset(MaterialPreset::Rocky);
+    const MaterialProperties metallic = materialPreset(MaterialPreset::Metallic);
+    const MaterialProperties icy = materialPreset(MaterialPreset::Icy);
+    const MaterialProperties gas = materialPreset(MaterialPreset::Gas);
+    assert(rocky.preset == MaterialPreset::Rocky);
+    assert(metallic.density > rocky.density);
+    assert(icy.fragmentation_threshold < rocky.fragmentation_threshold);
+    assert(gas.restitution < icy.restitution);
+
+    MaterialProperties custom;
+    applyMaterialPreset(custom, MaterialPreset::Metallic);
+    assert(custom.preset == MaterialPreset::Metallic);
+    assert(custom.tensile_strength == metallic.tensile_strength);
 }

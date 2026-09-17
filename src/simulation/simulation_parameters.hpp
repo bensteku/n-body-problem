@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dimension.hpp"
+#include "collision.hpp"
 #include "solver_configuration.hpp"
 
 namespace nbody {
@@ -15,6 +16,7 @@ struct SimulationParameters {
     Integrator integrator{Integrator::VelocityVerlet};
     unsigned long long seed{1};
     SolverConfiguration solver;
+    CollisionSettings collision;
 };
 
 }

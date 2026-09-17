@@ -635,6 +635,38 @@ Future collision outcomes may include:
 
 Body creation/removal must occur in a deferred mutation phase. A solver or collision loop must never invalidate its own iteration by directly resizing body storage.
 
+### 9.5 Explicit material properties and presets
+
+Bodies should expose their material-response values directly rather than deriving all collision behavior from density and size. Density remains a physical body property linked to mass and radius by the spherical-body relationship, while the following material values are independently editable:
+
+~~~cpp
+enum class MaterialPreset {
+    Custom,
+    Rocky,
+    Metallic,
+    Icy,
+    Gas
+};
+
+struct MaterialProperties {
+    MaterialPreset preset;
+    double density;                  // kg/m^3
+    double compressive_strength;     // Pa
+    double tensile_strength;         // Pa
+    double brittleness;              // normalized 0..1
+    double energy_absorption;        // normalized 0..1
+    double restitution;              // normalized 0..1
+    double damage_threshold;         // J/kg
+    double fragmentation_threshold;  // J/kg
+};
+~~~
+
+The initial presets should provide editable starting values for Rocky, Metallic, Icy, and Gas bodies. Applying a preset copies its values into the body; subsequent edits make the body Custom or otherwise visibly modified. Presets are convenience defaults, not hidden constraints.
+
+Hard-body collisions should use the material restitution together with the global collision cap. Heuristic damage and fragmentation should compare pre-impulse specific impact energy against each body's damage and fragmentation thresholds, while considering compressive/tensile strength, brittleness, energy absorption, density, and gravitational binding. The model is intentionally approximate but all inputs must remain inspectable and serializable.
+
+Material values must be preserved through snapshots, deterministic replay, solver switching, body duplication, and deferred collision mutations. A collision classifier should be separate from contact resolution so an ordinary hard-body bounce still evaluates impact severity without necessarily causing damage or fragmentation.
+
 ## 10. Boundary system
 
 Boundaries are optional external world constraints, not simulated bodies.
@@ -937,6 +969,14 @@ Double-clicking a body or selecting its list entry opens a details/property wind
 - radius;
 - density;
 - static flag;
+- material preset;
+- compressive strength;
+- tensile strength;
+- brittleness;
+- energy absorption;
+- material restitution;
+- damage threshold;
+- fragmentation threshold;
 - surface colors 1–3;
 - luminosity strength;
 - luminosity/light color;
@@ -1001,6 +1041,8 @@ The text-based creation dialog should support:
 - three surface colors;
 - luminosity and light color;
 - material preset;
+- compressive strength, tensile strength, brittleness, and energy absorption;
+- material restitution, damage threshold, and fragmentation threshold;
 - orientation and axial tilt;
 - spin/angular velocity;
 - body kind, eventually including black hole.
