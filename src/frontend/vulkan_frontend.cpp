@@ -403,6 +403,7 @@ private:
     bool grid_{};
     bool add_body_{};
     bool static_body_{};
+    bool scaled_solar_system_{};
     float camera_x_{};
     float camera_y_{};
     float view_scale_{20.0f};
@@ -431,8 +432,10 @@ private:
     }
 
     void drawSimulation(GLFWwindow* window, double elapsed) {
+        updateCameraInput(window);
         parameters_.dimension = Dimension::Two;
-        parameters_.timestep = std::clamp(simulation_timestep_, 1.0e-5, 1.0);
+        parameters_.timestep = std::clamp(simulation_timestep_, 1.0e-5, 86400.0);
+        parameters_.gravitational_constant = scaled_solar_system_ ? 9.33076e-11 : 0.1;
         parameters_.softening_length = 0.05;
         parameters_.collision.model = CollisionModel::Transparent;
         const double requested_rate = timeScaleSecondsPerRealSecond();
@@ -597,6 +600,45 @@ private:
         }
     }
 
+    void updateCameraInput(GLFWwindow* window) {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 work_min = viewport->WorkPos;
+        const ImVec2 work_max{viewport->WorkPos.x + viewport->WorkSize.x,
+                              viewport->WorkPos.y + viewport->WorkSize.y};
+        double cursor_x = 0.0;
+        double cursor_y = 0.0;
+        glfwGetCursorPos(window, &cursor_x, &cursor_y);
+        const bool over_world = cursor_x >= work_min.x && cursor_x <= work_max.x
+            && cursor_y >= work_min.y + 28.0 && cursor_y <= work_max.y;
+        const bool ui_using_mouse = ImGui::IsAnyItemActive() || add_body_;
+        if (over_world && !ui_using_mouse && pending_scroll_ != 0.0) {
+            const float old_scale = view_scale_;
+            view_scale_ = std::clamp(view_scale_ * std::pow(1.15f, static_cast<float>(pending_scroll_)),
+                                      0.25f, 200.0f);
+            const ImVec2 mouse{static_cast<float>(cursor_x), static_cast<float>(cursor_y)};
+            const float center_x = work_min.x + viewport->WorkSize.x * 0.5f;
+            const float center_y = work_min.y + viewport->WorkSize.y * 0.5f + 20.0f;
+            const float world_x = camera_x_ + (mouse.x - center_x) / old_scale;
+            const float world_y = camera_y_ - (mouse.y - center_y) / old_scale;
+            camera_x_ = world_x - (mouse.x - center_x) / view_scale_;
+            camera_y_ = world_y + (mouse.y - center_y) / view_scale_;
+        }
+        pending_scroll_ = 0.0;
+        if (over_world && !ui_using_mouse
+            && glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+            if (!have_cursor_position_) {
+                last_cursor_x_ = cursor_x;
+                last_cursor_y_ = cursor_y;
+                have_cursor_position_ = true;
+            }
+            camera_x_ -= static_cast<float>(cursor_x - last_cursor_x_) / view_scale_;
+            camera_y_ += static_cast<float>(cursor_y - last_cursor_y_) / view_scale_;
+        }
+        last_cursor_x_ = cursor_x;
+        last_cursor_y_ = cursor_y;
+        have_cursor_position_ = true;
+    }
+
     void createDebugSolarSystem() {
         struct PlanetDefinition {
             const char* name;
@@ -615,7 +657,9 @@ private:
         }};
         constexpr double neptune_orbit = 400.0;
         constexpr double scale = neptune_orbit / 30.070;
-        constexpr double gravitational_constant = 1.0;
+        // Calibrated so the Earth orbit is approximately one Julian year in
+        // simulation seconds after Neptune is mapped to radius 400.
+        constexpr double gravitational_constant = 9.33076e-11;
         constexpr double sun_mass = 1.0;
         constexpr double pi = 3.14159265358979323846;
         std::mt19937 generator(20260918);
@@ -643,6 +687,10 @@ private:
         }
         history_.clear();
         accumulator_ = 0.0;
+        scaled_solar_system_ = true;
+        simulation_timestep_ = 3600.0;
+        time_scale_value_ = 1.0;
+        time_scale_unit_ = 1;
         running_ = false;
         reversing_ = false;
         camera_x_ = 0.0f;
@@ -659,36 +707,6 @@ private:
         const ImVec2 work_min = viewport->WorkPos;
         const ImVec2 work_max{viewport->WorkPos.x + viewport->WorkSize.x,
                               viewport->WorkPos.y + viewport->WorkSize.y};
-        ImGuiIO& io = ImGui::GetIO();
-        if (ImGui::IsMouseHoveringRect(work_min, work_max) && !ImGui::IsAnyItemActive()) {
-            if (pending_scroll_ != 0.0) {
-                const float old_scale = view_scale_;
-                view_scale_ = std::clamp(view_scale_ * std::pow(1.15f, static_cast<float>(pending_scroll_)),
-                                          0.25f, 200.0f);
-                // Keep the world point under the cursor stable while zooming.
-                const ImVec2 mouse = io.MousePos;
-                const float world_x = camera_x_ + (mouse.x - (work_min.x + viewport->WorkSize.x * 0.5f)) / old_scale;
-                const float world_y = camera_y_ - (mouse.y - (work_min.y + viewport->WorkSize.y * 0.5f + 20.0f)) / old_scale;
-                camera_x_ = world_x - (mouse.x - (work_min.x + viewport->WorkSize.x * 0.5f)) / view_scale_;
-                camera_y_ = world_y + (mouse.y - (work_min.y + viewport->WorkSize.y * 0.5f + 20.0f)) / view_scale_;
-                pending_scroll_ = 0.0;
-            }
-            double cursor_x = 0.0;
-            double cursor_y = 0.0;
-            glfwGetCursorPos(window, &cursor_x, &cursor_y);
-            if (!have_cursor_position_) {
-                last_cursor_x_ = cursor_x;
-                last_cursor_y_ = cursor_y;
-                have_cursor_position_ = true;
-            }
-            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS
-                && !ImGui::IsAnyItemActive() && !io.WantCaptureMouse) {
-                camera_x_ -= static_cast<float>(cursor_x - last_cursor_x_) / view_scale_;
-                camera_y_ += static_cast<float>(cursor_y - last_cursor_y_) / view_scale_;
-            }
-            last_cursor_x_ = cursor_x;
-            last_cursor_y_ = cursor_y;
-        }
         ImGui::SetNextWindowPos({work_min.x + 12.0f, work_max.y - 42.0f}, ImGuiCond_Always);
         ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
             | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
