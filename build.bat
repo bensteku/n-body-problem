@@ -59,18 +59,22 @@ where cmake >nul 2>&1 || (
 )
 where ninja >nul 2>&1
 if errorlevel 1 if defined VSINSTALL if exist "%VSINSTALL%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe" set "PATH=%VSINSTALL%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;%PATH%"
-where ninja >nul 2>&1 || (
-    echo ERROR: ninja was not found on PATH or in Visual Studio.
-    exit /b 1
-)
+set "USE_VS_GENERATOR=0"
+where ninja >nul 2>&1 || set "USE_VS_GENERATOR=1"
 where cl >nul 2>&1 || (
     echo ERROR: MSVC cl.exe was not found. Install the Visual C++ Build Tools.
     exit /b 1
 )
 
 set "CMAKE_TOOLCHAIN_ARG="
-if defined VCPKG_ROOT if exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
-    set "CMAKE_TOOLCHAIN_ARG=-DCMAKE_TOOLCHAIN_FILE=\"%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake\""
+if defined VCPKG_ROOT (
+    if not exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
+        echo ERROR: VCPKG_ROOT does not point to a complete vcpkg checkout:
+        echo        %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake was not found.
+        echo        Clone the official vcpkg repository there and run bootstrap-vcpkg.bat.
+        exit /b 1
+    )
+    set "CMAKE_TOOLCHAIN_ARG=-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
     echo Using vcpkg toolchain: %VCPKG_ROOT%
 )
 
@@ -86,14 +90,27 @@ echo Building %BUILD_MODE%
 echo Build directory: %BUILD_DIR%
 echo.
 
-if /I "%BUILD_MODE%"=="legacy" (
-    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
+if "%USE_VS_GENERATOR%"=="0" (
+    if /I "%BUILD_MODE%"=="legacy" (
+        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
+    ) else (
+        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
+    )
 ) else (
-    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
+    echo Ninja was not found; using Visual Studio 2022 generator.
+    if /I "%BUILD_MODE%"=="legacy" (
+        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
+    ) else (
+        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
+    )
 )
 if errorlevel 1 exit /b %errorlevel%
 
-cmake --build "%BUILD_DIR%" --parallel
+if "%USE_VS_GENERATOR%"=="0" (
+    cmake --build "%BUILD_DIR%" --parallel
+) else (
+    cmake --build "%BUILD_DIR%" --config Release --parallel
+)
 if errorlevel 1 exit /b %errorlevel%
 
 echo.
