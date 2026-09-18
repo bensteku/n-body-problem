@@ -365,3 +365,4 @@ FodyWeavers.xsd
 /n_body_problem.zip
 /build/
 /.build/
+perf-data
