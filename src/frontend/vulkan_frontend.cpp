@@ -357,6 +357,15 @@ public:
         context.render(ImGui::GetDrawData());
     }
 
+    void onScroll(double offset) { pending_scroll_ += offset; }
+
+    static void scrollCallback(GLFWwindow* window, double x_offset, double y_offset) {
+        ImGui_ImplGlfw_ScrollCallback(window, x_offset, y_offset);
+        if (auto* state = static_cast<ApplicationState*>(glfwGetWindowUserPointer(window))) {
+            state->onScroll(y_offset);
+        }
+    }
+
 private:
     PhysicsSession session_;
     WorldState world_{Dimension::Two};
@@ -397,6 +406,10 @@ private:
     float camera_x_{};
     float camera_y_{};
     float view_scale_{20.0f};
+    double pending_scroll_{};
+    double last_cursor_x_{};
+    double last_cursor_y_{};
+    bool have_cursor_position_{};
 
     static constexpr std::size_t max_history_frames_ = 600;
 
@@ -624,7 +637,7 @@ private:
             body.position = {orbit * std::cos(angle), orbit * std::sin(angle), 0.0};
             body.velocity = {-speed * std::sin(angle), speed * std::cos(angle), 0.0};
             body.mass = planet.mass_ratio;
-            body.radius = 2.0;
+            body.radius = 1.5;
             body.kind = BodyKind::Ordinary;
             world_.addBody(body);
         }
@@ -648,20 +661,33 @@ private:
                               viewport->WorkPos.y + viewport->WorkSize.y};
         ImGuiIO& io = ImGui::GetIO();
         if (ImGui::IsMouseHoveringRect(work_min, work_max) && !ImGui::IsAnyItemActive()) {
-            if (io.MouseWheel != 0.0f) {
+            if (pending_scroll_ != 0.0) {
                 const float old_scale = view_scale_;
-                view_scale_ = std::clamp(view_scale_ * std::pow(1.15f, io.MouseWheel), 0.25f, 200.0f);
+                view_scale_ = std::clamp(view_scale_ * std::pow(1.15f, static_cast<float>(pending_scroll_)),
+                                          0.25f, 200.0f);
                 // Keep the world point under the cursor stable while zooming.
                 const ImVec2 mouse = io.MousePos;
                 const float world_x = camera_x_ + (mouse.x - (work_min.x + viewport->WorkSize.x * 0.5f)) / old_scale;
                 const float world_y = camera_y_ - (mouse.y - (work_min.y + viewport->WorkSize.y * 0.5f + 20.0f)) / old_scale;
                 camera_x_ = world_x - (mouse.x - (work_min.x + viewport->WorkSize.x * 0.5f)) / view_scale_;
                 camera_y_ = world_y + (mouse.y - (work_min.y + viewport->WorkSize.y * 0.5f + 20.0f)) / view_scale_;
+                pending_scroll_ = 0.0;
             }
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-                camera_x_ -= io.MouseDelta.x / view_scale_;
-                camera_y_ += io.MouseDelta.y / view_scale_;
+            double cursor_x = 0.0;
+            double cursor_y = 0.0;
+            glfwGetCursorPos(window, &cursor_x, &cursor_y);
+            if (!have_cursor_position_) {
+                last_cursor_x_ = cursor_x;
+                last_cursor_y_ = cursor_y;
+                have_cursor_position_ = true;
             }
+            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS
+                && !ImGui::IsAnyItemActive() && !io.WantCaptureMouse) {
+                camera_x_ -= static_cast<float>(cursor_x - last_cursor_x_) / view_scale_;
+                camera_y_ += static_cast<float>(cursor_y - last_cursor_y_) / view_scale_;
+            }
+            last_cursor_x_ = cursor_x;
+            last_cursor_y_ = cursor_y;
         }
         ImGui::SetNextWindowPos({work_min.x + 12.0f, work_max.y - 42.0f}, ImGuiCond_Always);
         ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
@@ -726,6 +752,8 @@ int VulkanFrontend::run() {
         VulkanFrontendContext context;
         context.initialize(window);
         ApplicationState application;
+        glfwSetWindowUserPointer(window, &application);
+        glfwSetScrollCallback(window, ApplicationState::scrollCallback);
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             application.draw(window, context);
