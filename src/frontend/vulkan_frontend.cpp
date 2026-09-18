@@ -639,6 +639,19 @@ private:
         have_cursor_position_ = true;
     }
 
+    float gridStep() const {
+        // Keep grid lines at a readable screen separation, but change only at
+        // discrete 1/2/5 x 10^n intervals so zooming never produces noisy
+        // continuously changing labels.
+        const float desired_world_spacing = 80.0f / view_scale_;
+        const float magnitude = std::pow(10.0f,
+                                         std::floor(std::log10(desired_world_spacing)));
+        const float normalized = desired_world_spacing / magnitude;
+        const float nice = normalized <= 1.0f ? 1.0f
+            : (normalized <= 2.0f ? 2.0f : (normalized <= 5.0f ? 5.0f : 10.0f));
+        return nice * magnitude;
+    }
+
     void createDebugSolarSystem() {
         struct PlanetDefinition {
             const char* name;
@@ -710,7 +723,8 @@ private:
         ImGui::SetNextWindowPos({work_min.x + 12.0f, work_max.y - 42.0f}, ImGuiCond_Always);
         ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
             | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-        ImGui::Text("Zoom %.2f  |  Scroll zooms, drag pans", view_scale_);
+        ImGui::Text("Zoom %.2f  |  Grid cell %.3g x %.3g units", view_scale_, gridStep(), gridStep());
+        ImGui::TextDisabled("Scroll zooms, drag pans");
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset view")) {
             camera_x_ = 0.0f;
@@ -722,7 +736,7 @@ private:
         if (grid_) {
             const float world_width = viewport->WorkSize.x / view_scale_;
             const float world_height = viewport->WorkSize.y / view_scale_;
-            const float grid_step = view_scale_ < 2.0f ? 50.0f : (view_scale_ < 8.0f ? 10.0f : 1.0f);
+            const float grid_step = gridStep();
             const int min_x = static_cast<int>(std::floor(camera_x_ - world_width * 0.5f / grid_step)) - 1;
             const int max_x = static_cast<int>(std::ceil(camera_x_ + world_width * 0.5f / grid_step)) + 1;
             const int min_y = static_cast<int>(std::floor(camera_y_ - world_height * 0.5f / grid_step)) - 1;
@@ -742,7 +756,10 @@ private:
             for (const RenderBody& body : publication_->cpu_snapshot->bodies) {
                 const ImVec2 position{origin.x + static_cast<float>(body.position.x) * view_scale_,
                                       origin.y - static_cast<float>(body.position.y) * view_scale_};
-                const float radius = std::clamp(static_cast<float>(body.radius * view_scale_), 2.0f, 24.0f);
+                // Physical body size follows camera zoom continuously. Keep a
+                // small minimum only so distant bodies remain selectable.
+                const float radius = std::max(0.75f,
+                                              static_cast<float>(body.radius * view_scale_));
                 const ImU32 color = body.kind == BodyKind::Star ? 0xFF60D0FFFF
                     : (body.is_static ? 0xFFB080FF : 0x80D8FFFF);
                 draw->AddCircleFilled(position, radius, color);
