@@ -13,6 +13,18 @@ nbody::Dimension parseDimension(int argc, char** argv) {
     return nbody::Dimension::Two;
 }
 
+nbody::ComputeBackend parseBackend(int argc, char** argv) {
+    if (argc > 2 && std::string_view(argv[2]) == "SIMD") return nbody::ComputeBackend::SIMD;
+    if (argc > 2 && std::string_view(argv[2]) == "GPU") return nbody::ComputeBackend::GPU;
+    return nbody::ComputeBackend::Scalar;
+}
+
+nbody::ForceModel parseForceModel(int argc, char** argv) {
+    return argc > 3 && (std::string_view(argv[3]) == "BaHu"
+        || std::string_view(argv[3]) == "BarnesHut")
+        ? nbody::ForceModel::BarnesHut : nbody::ForceModel::Full;
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -22,34 +34,16 @@ int main(int argc, char** argv) {
     nbody::SimulationParameters parameters;
     parameters.dimension = dimension;
     parameters.timestep = 0.01;
-#ifdef NBODY_FORCE_MODEL_BARNES_HUT
-    parameters.solver.force_model = nbody::ForceModel::BarnesHut;
-    parameters.solver.kind = nbody::SolverKind::Approximated;
-#ifdef NBODY_BACKEND_SIMD
-    parameters.solver.backend = nbody::ComputeBackend::SIMD;
-#else
-    parameters.solver.backend = nbody::ComputeBackend::Scalar;
-#endif
-#elif defined(NBODY_BACKEND_SIMD)
-    parameters.solver.force_model = nbody::ForceModel::Full;
-    parameters.solver.kind = nbody::SolverKind::Full;
-    parameters.solver.backend = nbody::ComputeBackend::SIMD;
-#elif defined(NBODY_BACKEND_GPU)
-    // Vulkan GPU support is the selected future backend; keep this build honest
-    // until the Vulkan device and compute implementation are available.
-    parameters.solver.force_model = nbody::ForceModel::Full;
-    parameters.solver.kind = nbody::SolverKind::Full;
-    parameters.solver.backend = nbody::ComputeBackend::GPU;
-#else
-    parameters.solver.force_model = nbody::ForceModel::Full;
-    parameters.solver.kind = nbody::SolverKind::Full;
-    parameters.solver.backend = nbody::ComputeBackend::Scalar;
-#endif
+    parameters.solver.backend = parseBackend(argc, argv);
+    parameters.solver.force_model = parseForceModel(argc, argv);
+    parameters.solver.kind = parameters.solver.force_model == nbody::ForceModel::BarnesHut
+        ? nbody::SolverKind::Approximated : nbody::SolverKind::Full;
     nbody::PhysicsSession physics_session(parameters.solver);
     const bool gpu_fallback = parameters.solver.backend == nbody::ComputeBackend::GPU
         && physics_session.engine().info(dimension).backend != nbody::ComputeBackend::GPU;
     physics_session.step(world, parameters);
-    const nbody::FrameLease frame = physics_session.publishFrame(world);
+    const nbody::FramePublication publication = physics_session.publishFrame(world);
+    const nbody::FrameLease& frame = publication.cpu_snapshot;
     const nbody::WorldDiagnostics diagnostics = world.diagnostics();
 
     std::cout << "nbody greenfield scaffold\n"

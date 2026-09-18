@@ -25,19 +25,27 @@ int main() {
     const BodyId frame_body_id = frame_world.addBody({{}, {1.0, 2.0, 3.0},
         {0.5, 0.0, -0.5}, 4.0, 0.25, false});
     FramePublisher frame_publisher(2);
-    FrameLease first_frame = frame_publisher.publish(frame_world);
-    assert(static_cast<bool>(first_frame));
-    assert(first_frame->dimension == Dimension::Three);
-    assert(first_frame->body_count == 1);
-    assert(first_frame->bodies.size() == 1);
-    assert(first_frame->bodies[0].id == frame_body_id);
-    assert(first_frame->bodies[0].position.x == 1.0);
+    FramePublication first_publication = frame_publisher.publish(frame_world, {});
+    assert(first_publication.published());
+    assert(static_cast<bool>(first_publication.cpu_snapshot));
+    assert(first_publication.sequence == 1);
+    assert(first_publication.cpu_snapshot->dimension == Dimension::Three);
+    assert(first_publication.cpu_snapshot->body_count == 1);
+    assert(first_publication.cpu_snapshot->bodies.size() == 1);
+    assert(first_publication.cpu_snapshot->bodies[0].id == frame_body_id);
+    assert(first_publication.cpu_snapshot->bodies[0].position.x == 1.0);
     frame_world.mutableBody(0).position.x = 9.0;
-    FrameLease second_frame = frame_publisher.publish(frame_world);
-    assert(second_frame->bodies[0].position.x == 9.0);
-    assert(first_frame->bodies[0].position.x == 1.0);
-    assert(first_frame->body_count_changed);
-    assert(second_frame->body_count_changed == false);
+    FramePublication second_publication = frame_publisher.publish(frame_world, {});
+    assert(second_publication.published());
+    assert(second_publication.sequence == 2);
+    assert(second_publication.cpu_snapshot->bodies[0].position.x == 9.0);
+    assert(first_publication.cpu_snapshot->bodies[0].position.x == 1.0);
+    assert(first_publication.cpu_snapshot->body_count_changed);
+    assert(second_publication.cpu_snapshot->body_count_changed == false);
+    FramePublication unsupported_publication = frame_publisher.publish(
+        frame_world, {FrameTransport::RendererBuffer});
+    assert(!unsupported_publication.published());
+    assert(unsupported_publication.status == FramePublicationStatus::UnsupportedTransport);
 
     PhysicsSession session;
     WorldState session_world = WorldState::deterministic(8, Dimension::Two, 19);
@@ -50,8 +58,9 @@ int main() {
     assert(switch_result.switched());
     assert(session.configuration().backend == ComputeBackend::SIMD);
     assert(session_world.isValid());
-    const FrameLease session_frame = session.publishFrame(session_world);
-    assert(session_frame->body_count == session_world.bodyCount());
+    const FramePublication session_publication = session.publishFrame(session_world);
+    assert(session_publication.published());
+    assert(session_publication.cpu_snapshot->body_count == session_world.bodyCount());
     SolverConfiguration invalid_switch;
     invalid_switch.force_model = ForceModel::BarnesHut;
     assert(!session.switchEngine(invalid_switch, session_world).switched());
@@ -209,8 +218,14 @@ int main() {
             ? ForceModel::BarnesHut : ForceModel::Full;
         parameters.solver.barnes_hut.opening_angle = 0.5;
         for (int step = 0; step < steps; ++step) {
-            assert(reference_engine.step(reference, parameters).advanced());
-            assert(candidate_engine.step(candidate, parameters).advanced());
+            const PhysicsStepResult reference_result = reference_engine.step(reference, parameters);
+            const PhysicsStepResult candidate_result = candidate_engine.step(candidate, parameters);
+            assert(reference_result.advanced());
+            assert(candidate_result.advanced());
+            assert(reference_result.timings.total_ms >= 0.0);
+            assert(candidate_result.timings.total_ms >= 0.0);
+            assert(reference_result.timings.force_ms >= 0.0);
+            assert(candidate_result.timings.force_ms >= 0.0);
             assert(nbody_test::worldsHaveNumericalParity(reference, candidate, tolerance));
         }
     };
@@ -255,6 +270,17 @@ int main() {
     assert(engine_step.advanced());
     assert(engine_step.body_count == engine_contract_world.bodyCount());
     assert(engine_step.simulation_time == engine_contract_world.time());
+    assert(engine_step.timings.total_ms >= 0.0);
+
+    const PhysicsEngineCapabilities session_capabilities = session.capabilities(Dimension::Two);
+    assert(session_capabilities.requested.backend == ComputeBackend::SIMD);
+    assert(session_capabilities.effective.backend == ComputeBackend::SIMD);
+    assert(!session_capabilities.fallback);
+    SimulationCommand switch_back_command;
+    switch_back_command.type = SimulationCommandType::SwitchEngine;
+    switch_back_command.solver = scalar_full_configuration;
+    assert(session.applyCommand(switch_back_command, session_world).switched());
+    assert(session.capabilities(Dimension::Two).effective.backend == ComputeBackend::Scalar);
 
     WorldState first = WorldState::deterministic(8, Dimension::Two, 1234);
     WorldState second = WorldState::deterministic(8, Dimension::Two, 1234);

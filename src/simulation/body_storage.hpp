@@ -1,9 +1,11 @@
 #pragma once
 
 #include "body_state.hpp"
+#include "dimension.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace nbody {
@@ -44,6 +46,12 @@ public:
     void reserve(std::size_t count);
     void clear();
     void append(const BodyState& body);
+    void integratePositions(std::span<const Vec3> accelerations, double timestep,
+                            Dimension dimension);
+    void integrateVelocities(std::span<const Vec3> initial_accelerations,
+                             std::span<const Vec3> final_accelerations,
+                             double timestep, Dimension dimension);
+    void advance(double timestep, Dimension dimension);
     void synchronizePositionComponents() const;
 
     ConstBodyView view(std::size_t index) const;

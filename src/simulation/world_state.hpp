@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <span>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -60,6 +61,13 @@ public:
     void reserveCollisionEvents(std::size_t count) { collision_events_.reserve(count); }
     void recordCollisionEvent(CollisionEvent event) { collision_events_.push_back(event); }
     void replaceBodies(std::vector<BodyState> bodies);
+
+    // Integrators use these bulk operations so the authoritative hot storage
+    // is traversed directly rather than materializing a mutable view per body.
+    void integratePositions(std::span<const Vec3> accelerations, double timestep);
+    void integrateVelocities(std::span<const Vec3> initial_accelerations,
+                             std::span<const Vec3> final_accelerations,
+                             double timestep);
 
     BodyId addBody(BodyState body);
     void advance(double timestep);

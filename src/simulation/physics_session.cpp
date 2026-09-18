@@ -3,7 +3,8 @@
 namespace nbody {
 
 PhysicsSession::PhysicsSession(SolverConfiguration configuration)
-    : configuration_(configuration), engine_(createPhysicsEngine(configuration_)) {}
+    : configuration_(configuration), engine_(createPhysicsEngine(configuration_)),
+      frame_publisher_(std::make_unique<CpuFramePublisher>()) {}
 
 PhysicsStepResult PhysicsSession::step(WorldState& world,
                                        const SimulationParameters& parameters) {
@@ -21,8 +22,24 @@ PhysicsStepResult PhysicsSession::step(WorldState& world,
     return engine_->step(world, effective_parameters);
 }
 
-FrameLease PhysicsSession::publishFrame(const WorldState& world) {
-    return frame_publisher_.publish(world);
+FramePublication PhysicsSession::publishFrame(const WorldState& world,
+                                              FramePublicationRequest request) {
+    return frame_publisher_->publish(world, request);
+}
+
+EngineSwitchResult PhysicsSession::applyCommand(const SimulationCommand& command,
+                                                const WorldState& world) {
+    if (command.type == SimulationCommandType::SwitchEngine) {
+        return switchEngine(command.solver, world);
+    }
+    return {EngineSwitchStatus::Rejected, "unsupported simulation command"};
+}
+
+PhysicsEngineCapabilities PhysicsSession::capabilities(Dimension dimension) const {
+    const PhysicsEngineInfo effective = engine_->info(dimension);
+    const bool fallback = configuration_.backend != effective.backend;
+    return {configuration_, effective, fallback,
+            fallback ? "requested backend unavailable; using fallback" : "available"};
 }
 
 EngineSwitchResult PhysicsSession::switchEngine(const SolverConfiguration& configuration,

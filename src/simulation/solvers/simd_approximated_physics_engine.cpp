@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <algorithm>
+#include <chrono>
 #include <thread>
 
 namespace nbody {
@@ -68,32 +69,45 @@ PhysicsStepResult SimdApproximatedPhysicsEngine::step(WorldState& world,
     }
 
     const double timestep = parameters.timestep;
+    const auto step_start = std::chrono::steady_clock::now();
+    PhysicsPhaseTimings timings;
+    auto phase_start = step_start;
     calculateAccelerations(world, parameters, initial_accelerations_);
-    for (std::size_t index = 0; index < world.bodyCount(); ++index) {
-        MutableBodyView body = world.mutableBody(index);
-        if (body.is_static()) continue;
-        body.position += body.velocity * timestep
-            + initial_accelerations_[index] * (0.5 * timestep * timestep);
-        if (world.dimension() == Dimension::Two) body.position.z = 0.0;
-    }
+    timings.force_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - phase_start).count();
+    phase_start = std::chrono::steady_clock::now();
+    world.integratePositions(initial_accelerations_, timestep);
+    timings.integration_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - phase_start).count();
 
+    phase_start = std::chrono::steady_clock::now();
     calculateAccelerations(world, parameters, final_accelerations_);
-    for (std::size_t index = 0; index < world.bodyCount(); ++index) {
-        MutableBodyView body = world.mutableBody(index);
-        if (body.is_static()) continue;
-        body.velocity += (initial_accelerations_[index] + final_accelerations_[index])
-            * (0.5 * timestep);
-        if (world.dimension() == Dimension::Two) body.velocity.z = 0.0;
-    }
+    timings.force_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - phase_start).count();
+    phase_start = std::chrono::steady_clock::now();
+    world.integrateVelocities(initial_accelerations_, final_accelerations_, timestep);
+    timings.integration_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - phase_start).count();
 
+    phase_start = std::chrono::steady_clock::now();
     SimdCollisionSystem::resolveContacts(world, parameters.collision,
                                          parameters.gravitational_constant,
                                          simd_collision_workspace_,
                                          scalar_collision_workspace_);
+    timings.collision_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - phase_start).count();
+    phase_start = std::chrono::steady_clock::now();
     BoundarySystem::resolve(world, parameters.boundary);
+    timings.boundary_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - phase_start).count();
+    phase_start = std::chrono::steady_clock::now();
     SimdCollisionSystem::applyDeferredOutcomes(world, parameters.collision);
+    timings.deferred_outcomes_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - phase_start).count();
     world.advanceTime(timestep);
-    return {PhysicsStepStatus::Advanced, world.time(), world.bodyCount()};
+    timings.total_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - step_start).count();
+    return {PhysicsStepStatus::Advanced, world.time(), world.bodyCount(), {}, timings};
 }
 
 PhysicsEngineInfo SimdApproximatedPhysicsEngine::info(Dimension dimension) const {

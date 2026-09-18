@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -37,7 +38,9 @@ bool worldsNumericallyClose(const nbody::WorldState& first, const nbody::WorldSt
 
 template <typename Solver>
 int runIsolatedSolver(std::string_view label, std::size_t body_count, int steps,
-                      Solver& solver, nbody::ForceModel force_model) {
+                      Solver& solver, nbody::ForceModel force_model,
+                      nbody::ThreadingMode threading = nbody::ThreadingMode::SingleThreaded,
+                      std::size_t worker_count = 0) {
     nbody::WorldState world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
     nbody::SimulationParameters parameters;
     parameters.dimension = nbody::Dimension::Two;
@@ -45,18 +48,78 @@ int runIsolatedSolver(std::string_view label, std::size_t body_count, int steps,
     parameters.timestep = 0.001;
     parameters.collision.model = nbody::CollisionModel::Transparent;
     parameters.solver.force_model = force_model;
+    parameters.solver.threading = threading;
+    parameters.solver.worker_count = worker_count;
 
     const auto start = std::chrono::steady_clock::now();
-    for (int step = 0; step < steps; ++step) solver.step(world, parameters);
+    nbody::PhysicsPhaseTimings timings;
+    for (int step = 0; step < steps; ++step) {
+        const nbody::PhysicsStepResult result = solver.step(world, parameters);
+        timings.force_ms += result.timings.force_ms;
+        timings.integration_ms += result.timings.integration_ms;
+        timings.collision_ms += result.timings.collision_ms;
+        timings.boundary_ms += result.timings.boundary_ms;
+        timings.deferred_outcomes_ms += result.timings.deferred_outcomes_ms;
+        timings.total_ms += result.timings.total_ms;
+    }
     const auto elapsed = std::chrono::steady_clock::now() - start;
     const double elapsed_ms = std::chrono::duration<double, std::milli>(elapsed).count();
     std::cout << "isolated solver=" << label
               << " dimension=2D steps=" << steps
               << " bodies=" << body_count
               << " elapsed_ms=" << elapsed_ms
+              << " force_ms=" << timings.force_ms
+              << " integration_ms=" << timings.integration_ms
+              << " collision_ms=" << timings.collision_ms
+              << " boundary_ms=" << timings.boundary_ms
+              << " deferred_ms=" << timings.deferred_outcomes_ms
+              << " accounted_total_ms=" << timings.total_ms
+              << " threading=" << (threading == nbody::ThreadingMode::MultiThreaded ? "MT" : "single")
+              << " workers=" << worker_count
               << " implementation=" << solver.info(nbody::Dimension::Two).name
               << " finite=" << (world.diagnostics().finite ? "true" : "false") << '\n';
     return world.isValid() ? 0 : 1;
+}
+
+struct ScenarioDefaults {
+    std::size_t bodies;
+    int steps;
+};
+
+ScenarioDefaults scenarioDefaults(std::string_view name) {
+    if (name == "sparse") return {256, 20};
+    if (name == "dense") return {2000, 5};
+    if (name == "large" || name == "large-bh") return {100000, 1};
+    throw std::invalid_argument("unknown scenario; expected sparse, dense, or large");
+}
+
+int runConfiguredScenario(std::string_view scenario, std::string_view backend,
+                          std::string_view force_model, std::size_t body_count, int steps,
+                          bool multithreaded, std::size_t worker_count) {
+    const nbody::ForceModel force = force_model == "BaHu" || force_model == "BarnesHut"
+        ? nbody::ForceModel::BarnesHut : nbody::ForceModel::Full;
+    const nbody::ThreadingMode threading = multithreaded
+        ? nbody::ThreadingMode::MultiThreaded : nbody::ThreadingMode::SingleThreaded;
+    const bool simd = backend == "SIMD";
+    const std::string label = std::string(scenario) + ":" + std::string(backend)
+        + ":" + std::string(force_model);
+
+    // GPU is currently an explicitly reported scalar fallback. Keeping it in this
+    // harness makes capability coverage visible without pretending it is a GPU run.
+    if (!simd && force == nbody::ForceModel::Full) {
+        nbody::ScalarFullPhysicsEngine solver;
+        return runIsolatedSolver(label, body_count, steps, solver, force, threading, worker_count);
+    }
+    if (!simd) {
+        nbody::ScalarApproximatedPhysicsEngine solver;
+        return runIsolatedSolver(label, body_count, steps, solver, force, threading, worker_count);
+    }
+    if (force == nbody::ForceModel::Full) {
+        nbody::SimdFullPhysicsEngine solver;
+        return runIsolatedSolver(label, body_count, steps, solver, force, threading, worker_count);
+    }
+    nbody::SimdApproximatedPhysicsEngine solver;
+    return runIsolatedSolver(label, body_count, steps, solver, force, threading, worker_count);
 }
 
 int runLargeBarnesHutComparison(std::size_t body_count, int steps) {
@@ -273,6 +336,36 @@ int main(int argc, char** argv) {
                   << " valid=" << (world.isValid() ? "true" : "false") << '\n';
         return world.isValid() && world.bodyCount() == body_count * fragment_count
             && std::abs(final_mass - initial_mass) < 1e-10 ? 0 : 1;
+    }
+
+    if (mode == "scenario") {
+        if (argc < 4) {
+            std::cerr << "scenario requires <sparse|dense|large> <Scalar|SIMD|GPU> <Full|BaHu> "
+                         "[bodies] [steps] [mt] [workers]\n";
+            return 2;
+        }
+        const std::string_view scenario = argv[2];
+        const std::string_view backend = argv[3];
+        const std::string_view force_model = argc > 4 ? std::string_view(argv[4]) : "Full";
+        if (backend != "Scalar" && backend != "SIMD" && backend != "GPU") {
+            std::cerr << "scenario backend must be Scalar, SIMD, or GPU\n";
+            return 2;
+        }
+        if (force_model != "Full" && force_model != "BaHu" && force_model != "BarnesHut") {
+            std::cerr << "scenario force model must be Full or BaHu\n";
+            return 2;
+        }
+        const ScenarioDefaults defaults = scenarioDefaults(scenario);
+        const std::size_t body_count = argc > 5 ? std::stoull(argv[5]) : defaults.bodies;
+        const int steps = argc > 6 ? std::stoi(argv[6]) : defaults.steps;
+        const bool multithreaded = argc > 7 && std::stoull(argv[7]) != 0;
+        const std::size_t worker_count = argc > 8 ? std::stoull(argv[8]) : 0;
+        if (body_count == 0 || steps <= 0 || (multithreaded && worker_count == 0)) {
+            std::cerr << "scenario requires bodies > 0, steps > 0, and workers > 0 in MT mode\n";
+            return 2;
+        }
+        return runConfiguredScenario(scenario, backend, force_model, body_count, steps,
+                                     multithreaded, worker_count);
     }
     const bool isolated_mode = mode == "scalar-bh" || mode == "simd-bh"
         || mode == "scalar-full" || mode == "simd-full";

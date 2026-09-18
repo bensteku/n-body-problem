@@ -2,13 +2,15 @@
 setlocal EnableExtensions
 
 rem Simple entry point for all supported builds.
-rem Usage: build.bat [Scalar|SIMD|GPU] [Full|BaHu]
+rem Usage: build.bat
 rem        build.bat legacy [Scalar|SIMD|GPU] [Full|BaHu]
 
 if /I "%~1"=="legacy" goto legacy_args
 set "BUILD_MODE=greenfield"
-set "BACKEND=%~1"
-set "FORCE_MODEL=%~2"
+if not "%~1"=="" (
+    echo Usage: build.bat
+    exit /b 2
+)
 set "TARGET=nbody_app.exe"
 goto args_ready
 
@@ -16,6 +18,10 @@ goto args_ready
 set "BUILD_MODE=legacy"
 set "BACKEND=%~2"
 set "FORCE_MODEL=%~3"
+if not "%~4"=="" (
+    echo Usage: build.bat legacy [Scalar^|SIMD^|GPU] [Full^|BaHu]
+    exit /b 2
+)
 set "TARGET=n_body_problem.exe"
 
 :args_ready
@@ -64,13 +70,21 @@ where cl >nul 2>&1 || (
 
 rem Keep a non-backslash final character so quoted paths are parsed correctly by CMake.
 set "ROOT=%~dp0."
-set "BUILD_DIR=%ROOT%\build\%BUILD_MODE%-%BACKEND%-%FORCE_MODEL%"
+if /I "%BUILD_MODE%"=="legacy" (
+    set "BUILD_DIR=%ROOT%\build\legacy-%BACKEND%-%FORCE_MODEL%"
+) else (
+    set "BUILD_DIR=%ROOT%\build\greenfield"
+)
 echo.
-echo Building %BUILD_MODE% / %BACKEND% / %FORCE_MODEL%
+echo Building %BUILD_MODE%
 echo Build directory: %BUILD_DIR%
 echo.
 
-cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL%
+if /I "%BUILD_MODE%"=="legacy" (
+    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL%
+) else (
+    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE%
+)
 if errorlevel 1 exit /b %errorlevel%
 
 cmake --build "%BUILD_DIR%" --parallel

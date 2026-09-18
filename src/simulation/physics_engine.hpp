@@ -17,6 +17,22 @@ struct PhysicsEngineInfo {
     SolverKind kind{SolverKind::Full};
 };
 
+struct PhysicsEngineCapabilities {
+    SolverConfiguration requested;
+    PhysicsEngineInfo effective;
+    bool fallback{false};
+    std::string_view status{"available"};
+};
+
+struct PhysicsPhaseTimings {
+    double force_ms{};
+    double integration_ms{};
+    double collision_ms{};
+    double boundary_ms{};
+    double deferred_outcomes_ms{};
+    double total_ms{};
+};
+
 enum class PhysicsStepStatus {
     Advanced,
     Skipped,
@@ -28,6 +44,7 @@ struct PhysicsStepResult {
     double simulation_time{};
     std::size_t body_count{};
     std::string_view message{};
+    PhysicsPhaseTimings timings;
 
     bool advanced() const { return status == PhysicsStepStatus::Advanced; }
     bool rejected() const { return status == PhysicsStepStatus::Rejected; }
@@ -42,8 +59,9 @@ public:
 
     // Publication is intentionally shared at the API boundary while the
     // numerical engine remains free to use backend-specific internal storage.
-    FrameLease publishFrame(const WorldState& world, FramePublisher& publisher) const {
-        return publisher.publish(world);
+    FramePublication publishFrame(const WorldState& world, IFramePublisher& publisher,
+                                  FramePublicationRequest request = {}) const {
+        return publisher.publish(world, request);
     }
 };
 

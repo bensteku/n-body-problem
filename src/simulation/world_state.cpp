@@ -19,17 +19,19 @@ BodyId WorldState::addBody(BodyState body) {
 }
 
 void WorldState::advance(double timestep) {
-    for (std::size_t index = 0; index < storage_.size(); ++index) {
-        MutableBodyView body = storage_.mutableView(index);
-        if (!body.is_static()) {
-            body.position += body.velocity * timestep;
-            if (dimension_ == Dimension::Two) {
-                body.position.z = 0.0;
-                body.velocity.z = 0.0;
-            }
-        }
-    }
+    storage_.advance(timestep, dimension_);
     time_ += timestep;
+}
+
+void WorldState::integratePositions(std::span<const Vec3> accelerations, double timestep) {
+    storage_.integratePositions(accelerations, timestep, dimension_);
+}
+
+void WorldState::integrateVelocities(std::span<const Vec3> initial_accelerations,
+                                     std::span<const Vec3> final_accelerations,
+                                     double timestep) {
+    storage_.integrateVelocities(initial_accelerations, final_accelerations,
+                                 timestep, dimension_);
 }
 
 void WorldState::replaceBodies(std::vector<BodyState> bodies) {

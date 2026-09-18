@@ -1,5 +1,7 @@
 #include "simulation/body_storage.hpp"
 
+#include <stdexcept>
+
 namespace nbody {
 
 BodyState ConstBodyView::snapshot() const {
@@ -53,6 +55,46 @@ void BodyStorage::append(const BodyState& body) {
     materials_.push_back(body.material);
     accumulated_damage_.push_back(body.accumulated_damage);
     kinds_.push_back(body.kind);
+}
+
+void BodyStorage::integratePositions(std::span<const Vec3> accelerations,
+                                     double timestep, Dimension dimension) {
+    if (accelerations.size() != size()) {
+        throw std::invalid_argument("position acceleration count does not match body count");
+    }
+    const double half_timestep_squared = 0.5 * timestep * timestep;
+    for (std::size_t index = 0; index < size(); ++index) {
+        if (static_flags_[index] != 0) continue;
+        positions_[index] += velocities_[index] * timestep
+            + accelerations[index] * half_timestep_squared;
+        if (dimension == Dimension::Two) positions_[index].z = 0.0;
+    }
+}
+
+void BodyStorage::integrateVelocities(std::span<const Vec3> initial_accelerations,
+                                      std::span<const Vec3> final_accelerations,
+                                      double timestep, Dimension dimension) {
+    if (initial_accelerations.size() != size() || final_accelerations.size() != size()) {
+        throw std::invalid_argument("velocity acceleration count does not match body count");
+    }
+    const double half_timestep = 0.5 * timestep;
+    for (std::size_t index = 0; index < size(); ++index) {
+        if (static_flags_[index] != 0) continue;
+        velocities_[index] += (initial_accelerations[index] + final_accelerations[index])
+            * half_timestep;
+        if (dimension == Dimension::Two) velocities_[index].z = 0.0;
+    }
+}
+
+void BodyStorage::advance(double timestep, Dimension dimension) {
+    for (std::size_t index = 0; index < size(); ++index) {
+        if (static_flags_[index] != 0) continue;
+        positions_[index] += velocities_[index] * timestep;
+        if (dimension == Dimension::Two) {
+            positions_[index].z = 0.0;
+            velocities_[index].z = 0.0;
+        }
+    }
 }
 
 void BodyStorage::synchronizePositionComponents() const {
