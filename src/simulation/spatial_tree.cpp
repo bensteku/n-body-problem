@@ -148,4 +148,18 @@ void SpatialTree::potentialContactPairs(const BodyStorage& bodies,
     }
 }
 
+void SpatialTree::potentialBodyPairs(const BodyStorage& bodies,
+                                     std::vector<std::pair<std::size_t, std::size_t>>& output) const {
+    output.clear();
+    if (nodes_.empty()) return;
+    std::vector<std::size_t> candidates;
+    for (std::size_t first = 0; first < bodies.size(); ++first) {
+        candidates.clear();
+        query(0, first, bodies, candidates);
+        for (const std::size_t second : candidates) {
+            if (second > first) output.emplace_back(first, second);
+        }
+    }
+}
+
 }

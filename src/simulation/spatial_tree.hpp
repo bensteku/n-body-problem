@@ -21,6 +21,8 @@ public:
     Dimension dimension() const { return dimension_; }
     void potentialContactPairs(const BodyStorage& bodies,
                                std::vector<std::pair<std::size_t, std::size_t>>& output) const;
+    void potentialBodyPairs(const BodyStorage& bodies,
+                            std::vector<std::pair<std::size_t, std::size_t>>& output) const;
 
 private:
     struct Node {

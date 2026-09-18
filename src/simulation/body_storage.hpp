@@ -56,6 +56,7 @@ public:
     const std::vector<double>& positionZ() const { return position_z_; }
     const std::vector<Vec3>& velocities() const { return velocities_; }
     const std::vector<double>& masses() const { return masses_; }
+    const std::vector<double>& radii() const { return radii_; }
 
 private:
     // Hot simulation data: contiguous and isolated from material/editor state.

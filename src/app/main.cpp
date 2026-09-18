@@ -1,9 +1,5 @@
 #include "simulation/world_state.hpp"
-#include "simulation/solver.hpp"
-#include "simulation/solvers/scalar_full_solver.hpp"
-#include "simulation/solvers/scalar_barnes_hut_solver.hpp"
-#include "simulation/solvers/simd_barnes_hut_solver.hpp"
-#include "simulation/solvers/simd_full_solver.hpp"
+#include "simulation/physics_engine_factory.hpp"
 
 #include <iostream>
 #include <memory>
@@ -27,29 +23,34 @@ int main(int argc, char** argv) {
     nbody::SimulationParameters parameters;
     parameters.dimension = dimension;
     parameters.timestep = 0.01;
-    std::unique_ptr<nbody::ISolver> solver;
-    bool gpu_fallback = false;
+    std::unique_ptr<nbody::IPhysicsEngine> physics_engine;
 #ifdef NBODY_FORCE_MODEL_BARNES_HUT
     parameters.solver.force_model = nbody::ForceModel::BarnesHut;
+    parameters.solver.kind = nbody::SolverKind::Approximated;
 #ifdef NBODY_BACKEND_SIMD
-    solver = std::make_unique<nbody::SimdBarnesHutSolver>();
+    parameters.solver.backend = nbody::ComputeBackend::SIMD;
 #else
-    solver = std::make_unique<nbody::ScalarBarnesHutSolver>();
+    parameters.solver.backend = nbody::ComputeBackend::Scalar;
 #endif
 #elif defined(NBODY_BACKEND_SIMD)
     parameters.solver.force_model = nbody::ForceModel::Full;
-    solver = std::make_unique<nbody::SimdFullSolver>();
+    parameters.solver.kind = nbody::SolverKind::Full;
+    parameters.solver.backend = nbody::ComputeBackend::SIMD;
 #elif defined(NBODY_BACKEND_GPU)
     // Vulkan GPU support is the selected future backend; keep this build honest
     // until the Vulkan device and compute implementation are available.
-    gpu_fallback = true;
     parameters.solver.force_model = nbody::ForceModel::Full;
-    solver = std::make_unique<nbody::ScalarFullSolver>();
+    parameters.solver.kind = nbody::SolverKind::Full;
+    parameters.solver.backend = nbody::ComputeBackend::GPU;
 #else
     parameters.solver.force_model = nbody::ForceModel::Full;
-    solver = std::make_unique<nbody::ScalarFullSolver>();
+    parameters.solver.kind = nbody::SolverKind::Full;
+    parameters.solver.backend = nbody::ComputeBackend::Scalar;
 #endif
-    solver->step(world, parameters);
+    physics_engine = nbody::createPhysicsEngine(parameters.solver);
+    const bool gpu_fallback = parameters.solver.backend == nbody::ComputeBackend::GPU
+        && physics_engine->info(dimension).backend != nbody::ComputeBackend::GPU;
+    physics_engine->step(world, parameters);
     const nbody::WorldDiagnostics diagnostics = world.diagnostics();
 
     std::cout << "nbody greenfield scaffold\n"
@@ -58,9 +59,9 @@ int main(int argc, char** argv) {
               << "time=" << world.time() << "\n"
               << "solver=";
     if (gpu_fallback) {
-        std::cout << "GPU unavailable (fallback: " << solver->info(dimension).name << ")\n";
+        std::cout << "GPU unavailable (fallback: " << physics_engine->info(dimension).name << ")\n";
     } else {
-        std::cout << solver->info(dimension).name << "\n";
+        std::cout << physics_engine->info(dimension).name << "\n";
     }
     std::cout << "total_mass=" << diagnostics.total_mass << "\n"
               << "finite=" << (diagnostics.finite ? "true" : "false") << '\n';

@@ -1,4 +1,4 @@
-#include "simulation/collision_system.hpp"
+#include "simulation/scalar_collision_system.hpp"
 #include "simulation/spatial_tree.hpp"
 
 #include <algorithm>
@@ -372,7 +372,19 @@ void applyDeferredFragmentation(WorldState& world, const CollisionSettings& sett
 
 }
 
-void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings& settings, double gravitational_constant) {
+void ScalarCollisionSystem::resolveContacts(WorldState& world, const CollisionSettings& settings,
+    double gravitational_constant) {
+    resolveContactsInternal(world, settings, gravitational_constant, nullptr);
+}
+
+void ScalarCollisionSystem::resolveContactsForPairs(WorldState& world, const CollisionSettings& settings,
+    double gravitational_constant, std::span<const std::pair<std::size_t, std::size_t>> pairs) {
+    resolveContactsInternal(world, settings, gravitational_constant, &pairs);
+}
+
+void ScalarCollisionSystem::resolveContactsInternal(WorldState& world,
+    const CollisionSettings& settings, double gravitational_constant,
+    const std::span<const std::pair<std::size_t, std::size_t>>* supplied_pairs) {
     CollisionSettings effective_settings = settings;
     world.clearCollisionEvents();
     world.resetCollisionTransitionDiagnostics(settings.model);
@@ -412,25 +424,35 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
     case CollisionModel::HardBody: {
         const Dimension dimension = world.dimension();
         const double restitution = std::clamp(effective_settings.restitution, 0.0, 1.0);
-        CollisionWorkspace& workspace = collisionWorkspace(dimension, effective_settings.broad_phase);
-        if (effective_settings.broad_phase.spatial_tree_enabled) {
-            workspace.tree.rebuild(world.bodyStorage());
-            workspace.tree.potentialContactPairs(world.bodyStorage(), workspace.candidate_pairs);
+        CollisionWorkspace* workspace = nullptr;
+        std::span<const std::pair<std::size_t, std::size_t>> candidate_pairs;
+        if (supplied_pairs != nullptr) {
+            // The SIMD narrow phase already owns the filtered pair list. Do
+            // not copy it into the scalar workspace before resolving it.
+            candidate_pairs = *supplied_pairs;
         } else {
-            workspace.candidate_pairs.clear();
-            for (std::size_t first = 0; first < world.bodyCount(); ++first) {
-                for (std::size_t second = first + 1; second < world.bodyCount(); ++second) {
-                    workspace.candidate_pairs.emplace_back(first, second);
+            workspace = &collisionWorkspace(dimension, effective_settings.broad_phase);
+            auto& generated_pairs = workspace->candidate_pairs;
+            if (effective_settings.broad_phase.spatial_tree_enabled) {
+                workspace->tree.rebuild(world.bodyStorage());
+                workspace->tree.potentialContactPairs(world.bodyStorage(), generated_pairs);
+            } else {
+                generated_pairs.clear();
+                for (std::size_t first = 0; first < world.bodyCount(); ++first) {
+                    for (std::size_t second = first + 1; second < world.bodyCount(); ++second) {
+                        generated_pairs.emplace_back(first, second);
+                    }
                 }
             }
+            candidate_pairs = generated_pairs;
         }
 
-        world.reserveCollisionEvents(workspace.candidate_pairs.size());
+        world.reserveCollisionEvents(candidate_pairs.size());
         std::vector<std::uint8_t> pending_removal;
         if (effective_settings.classifier.absorption_enabled) {
             pending_removal.assign(world.bodyCount(), 0);
         }
-        for (const auto [first, second] : workspace.candidate_pairs) {
+        for (const auto [first, second] : candidate_pairs) {
                 MutableBodyView first_body = world.mutableBody(first);
                 MutableBodyView second_body = world.mutableBody(second);
                 if (!pending_removal.empty() && (pending_removal[first] || pending_removal[second])) continue;
@@ -525,7 +547,7 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
     throw std::logic_error("Unknown collision model");
 }
 
-void CollisionSystem::applyDeferredOutcomes(WorldState& world, const CollisionSettings& settings) {
+void ScalarCollisionSystem::applyDeferredOutcomes(WorldState& world, const CollisionSettings& settings) {
     applyDeferredAbsorption(world, settings);
     applyDeferredDamage(world);
     applyDeferredFragmentation(world, settings);

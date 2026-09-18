@@ -7,18 +7,19 @@
 
 namespace nbody {
 
-struct SolverInfo {
+struct PhysicsEngineInfo {
     ComputeBackend backend{ComputeBackend::Scalar};
     ForceModel force_model{ForceModel::Full};
     Dimension dimension{Dimension::Two};
     std::string_view name{"Scalar Full"};
+    SolverKind kind{SolverKind::Full};
 };
 
-class ISolver {
+class IPhysicsEngine {
 public:
-    virtual ~ISolver() = default;
+    virtual ~IPhysicsEngine() = default;
     virtual void step(WorldState& world, const SimulationParameters& parameters) = 0;
-    virtual SolverInfo info(Dimension dimension) const = 0;
+    virtual PhysicsEngineInfo info(Dimension dimension) const = 0;
 };
 
 }

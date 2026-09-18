@@ -1,19 +1,19 @@
-#include "simulation/solvers/simd_barnes_hut_solver.hpp"
+#include "simulation/solvers/simd_approximated_physics_engine.hpp"
 
 #include "simulation/boundary_system.hpp"
-#include "simulation/collision_system.hpp"
-#include "simulation/solvers/scalar_barnes_hut_solver.hpp"
+#include "simulation/simd_collision_system.hpp"
+#include "simulation/solvers/scalar_approximated_physics_engine.hpp"
 #include "simulation/solvers/simd_barnes_hut_kernel.hpp"
 
 #include <stdexcept>
 
 namespace nbody {
 
-SimdBarnesHutSolver::SimdBarnesHutSolver() : capabilities_(detectSimdCapabilities()) {}
+SimdApproximatedPhysicsEngine::SimdApproximatedPhysicsEngine()
+    : capabilities_(detectSimdCapabilities()) {}
 
-void SimdBarnesHutSolver::calculateAccelerations(const WorldState& world,
-                                                 const SimulationParameters& parameters,
-                                                 std::vector<Vec3>& output) const {
+void SimdApproximatedPhysicsEngine::calculateAccelerations(const WorldState& world,
+    const SimulationParameters& parameters, std::vector<Vec3>& output) const {
     const BarnesHutSettings& settings = parameters.solver.barnes_hut;
     if (!tree_ || tree_->dimension() != world.dimension()
         || tree_->leafCapacity() != settings.leaf_capacity
@@ -25,9 +25,10 @@ void SimdBarnesHutSolver::calculateAccelerations(const WorldState& world,
     calculateAvx2BarnesHutAccelerations(world, parameters, *tree_, output);
 }
 
-void SimdBarnesHutSolver::step(WorldState& world, const SimulationParameters& parameters) {
+void SimdApproximatedPhysicsEngine::step(WorldState& world,
+    const SimulationParameters& parameters) {
     if (!capabilities_.avx2) {
-        ScalarBarnesHutSolver fallback;
+        ScalarApproximatedPhysicsEngine fallback;
         fallback.step(world, parameters);
         return;
     }
@@ -35,30 +36,37 @@ void SimdBarnesHutSolver::step(WorldState& world, const SimulationParameters& pa
     if (parameters.dimension != world.dimension()) {
         throw std::invalid_argument("Simulation parameter dimension does not match WorldState dimension");
     }
+
     const double timestep = parameters.timestep;
     calculateAccelerations(world, parameters, initial_accelerations_);
     for (std::size_t index = 0; index < world.bodyCount(); ++index) {
         MutableBodyView body = world.mutableBody(index);
         if (body.is_static()) continue;
-        body.position += body.velocity * timestep + initial_accelerations_[index] * (0.5 * timestep * timestep);
+        body.position += body.velocity * timestep
+            + initial_accelerations_[index] * (0.5 * timestep * timestep);
         if (world.dimension() == Dimension::Two) body.position.z = 0.0;
     }
+
     calculateAccelerations(world, parameters, final_accelerations_);
     for (std::size_t index = 0; index < world.bodyCount(); ++index) {
         MutableBodyView body = world.mutableBody(index);
         if (body.is_static()) continue;
-        body.velocity += (initial_accelerations_[index] + final_accelerations_[index]) * (0.5 * timestep);
+        body.velocity += (initial_accelerations_[index] + final_accelerations_[index])
+            * (0.5 * timestep);
         if (world.dimension() == Dimension::Two) body.velocity.z = 0.0;
     }
-    CollisionSystem::resolveContacts(world, parameters.collision, parameters.gravitational_constant);
+
+    SimdCollisionSystem::resolveContacts(world, parameters.collision,
+                                         parameters.gravitational_constant);
     BoundarySystem::resolve(world, parameters.boundary);
-    CollisionSystem::applyDeferredOutcomes(world, parameters.collision);
+    SimdCollisionSystem::applyDeferredOutcomes(world, parameters.collision);
     world.advanceTime(timestep);
 }
 
-SolverInfo SimdBarnesHutSolver::info(Dimension dimension) const {
+PhysicsEngineInfo SimdApproximatedPhysicsEngine::info(Dimension dimension) const {
     return {ComputeBackend::SIMD, ForceModel::BarnesHut, dimension,
-            capabilities_.avx2 ? "SIMD Barnes-Hut (AVX2)" : "SIMD Barnes-Hut (scalar fallback)"};
+            capabilities_.avx2 ? "SIMD Barnes-Hut (AVX2)" : "SIMD Barnes-Hut (scalar fallback)",
+            SolverKind::Approximated};
 }
 
 }

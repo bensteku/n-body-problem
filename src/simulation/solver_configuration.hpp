@@ -6,6 +6,7 @@ namespace nbody {
 
 enum class ComputeBackend { Scalar, SIMD, GPU };
 enum class ForceModel { Full, BarnesHut };
+enum class SolverKind { Full, Approximated };
 
 struct BarnesHutSettings {
     // Smaller values are more accurate and more expensive.
@@ -17,6 +18,7 @@ struct BarnesHutSettings {
 struct SolverConfiguration {
     ComputeBackend backend{ComputeBackend::Scalar};
     ForceModel force_model{ForceModel::Full};
+    SolverKind kind{SolverKind::Full};
     BarnesHutSettings barnes_hut;
 };
 
