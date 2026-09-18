@@ -1,0 +1,487 @@
+#include "frontend/vulkan_frontend.hpp"
+
+#include "simulation/physics_session.hpp"
+
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace nbody::frontend {
+
+namespace {
+
+void check(VkResult result, const char* operation) {
+    if (result != VK_SUCCESS) throw std::runtime_error(std::string(operation) + " failed");
+}
+
+struct VulkanFrontendContext {
+    VkInstance instance{};
+    VkSurfaceKHR surface{};
+    VkPhysicalDevice physical_device{};
+    VkDevice device{};
+    VkQueue queue{};
+    std::uint32_t queue_family{};
+    VkSwapchainKHR swapchain{};
+    VkFormat format{};
+    VkExtent2D extent{};
+    std::vector<VkImageView> views;
+    VkRenderPass render_pass{};
+    std::vector<VkFramebuffer> framebuffers;
+    VkCommandPool command_pool{};
+    std::vector<VkCommandBuffer> commands;
+    VkSemaphore image_available{};
+    VkSemaphore render_finished{};
+    VkFence fence{};
+    VkDescriptorPool descriptor_pool{};
+
+    void initialize(GLFWwindow* window) {
+        createInstance();
+        check(glfwCreateWindowSurface(instance, window, nullptr, &surface), "window surface");
+        selectDevice();
+        createDevice();
+        createSwapchain(window);
+        createRenderPass();
+        createFramebuffers();
+        createCommands();
+        createSync();
+        initializeImGui(window);
+    }
+
+    void render(ImDrawData* draw_data) {
+        check(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX), "wait fence");
+        check(vkResetFences(device, 1, &fence), "reset fence");
+        std::uint32_t image = 0;
+        const VkResult acquired = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
+                                                         image_available, VK_NULL_HANDLE, &image);
+        if (acquired == VK_ERROR_OUT_OF_DATE_KHR) return;
+        check(acquired, "acquire swapchain image");
+        check(vkResetCommandBuffer(commands[image], 0), "reset command buffer");
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        check(vkBeginCommandBuffer(commands[image], &begin), "begin command buffer");
+        VkClearValue clear{};
+        clear.color = {{0.02f, 0.03f, 0.06f, 1.0f}};
+        VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        pass.renderPass = render_pass;
+        pass.framebuffer = framebuffers[image];
+        pass.renderArea.extent = extent;
+        pass.clearValueCount = 1;
+        pass.pClearValues = &clear;
+        vkCmdBeginRenderPass(commands[image], &pass, VK_SUBPASS_CONTENTS_INLINE);
+        ImGui_ImplVulkan_RenderDrawData(draw_data, commands[image]);
+        vkCmdEndRenderPass(commands[image]);
+        check(vkEndCommandBuffer(commands[image]), "end command buffer");
+
+        const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.waitSemaphoreCount = 1;
+        submit.pWaitSemaphores = &image_available;
+        submit.pWaitDstStageMask = &wait_stage;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &commands[image];
+        submit.signalSemaphoreCount = 1;
+        submit.pSignalSemaphores = &render_finished;
+        check(vkQueueSubmit(queue, 1, &submit, fence), "submit command buffer");
+
+        VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        present.waitSemaphoreCount = 1;
+        present.pWaitSemaphores = &render_finished;
+        present.swapchainCount = 1;
+        present.pSwapchains = &swapchain;
+        present.pImageIndices = &image;
+        const VkResult presented = vkQueuePresentKHR(queue, &present);
+        if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) check(presented, "present");
+    }
+
+    ~VulkanFrontendContext() {
+        if (device != VK_NULL_HANDLE) vkDeviceWaitIdle(device);
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        if (descriptor_pool) vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
+        if (fence) vkDestroyFence(device, fence, nullptr);
+        if (image_available) vkDestroySemaphore(device, image_available, nullptr);
+        if (render_finished) vkDestroySemaphore(device, render_finished, nullptr);
+        if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
+        for (VkFramebuffer framebuffer : framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
+        if (render_pass) vkDestroyRenderPass(device, render_pass, nullptr);
+        for (VkImageView view : views) vkDestroyImageView(device, view, nullptr);
+        if (swapchain) vkDestroySwapchainKHR(device, swapchain, nullptr);
+        if (device) vkDestroyDevice(device, nullptr);
+        if (surface) vkDestroySurfaceKHR(instance, surface, nullptr);
+        if (instance) vkDestroyInstance(instance, nullptr);
+    }
+
+private:
+    void createInstance() {
+        std::uint32_t count = 0;
+        const char** extensions = glfwGetRequiredInstanceExtensions(&count);
+        if (!extensions) throw std::runtime_error("GLFW Vulkan extensions unavailable");
+        VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        application.pApplicationName = "N-Body Simulator";
+        application.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
+        application.pEngineName = "N-Body Greenfield";
+        application.engineVersion = VK_MAKE_VERSION(0, 1, 0);
+        application.apiVersion = VK_API_VERSION_1_0;
+        VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        info.pApplicationInfo = &application;
+        info.enabledExtensionCount = count;
+        info.ppEnabledExtensionNames = extensions;
+        check(vkCreateInstance(&info, nullptr, &instance), "create Vulkan instance");
+    }
+
+    bool suitable(VkPhysicalDevice candidate, std::uint32_t& selected_family) const {
+        std::uint32_t count = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, nullptr);
+        std::vector<VkQueueFamilyProperties> families(count);
+        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, families.data());
+        for (std::uint32_t index = 0; index < count; ++index) {
+            VkBool32 present = VK_FALSE;
+            vkGetPhysicalDeviceSurfaceSupportKHR(candidate, index, surface, &present);
+            if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) {
+                std::uint32_t formats = 0;
+                std::uint32_t modes = 0;
+                vkGetPhysicalDeviceSurfaceFormatsKHR(candidate, surface, &formats, nullptr);
+                vkGetPhysicalDeviceSurfacePresentModesKHR(candidate, surface, &modes, nullptr);
+                if (formats && modes) {
+                    selected_family = index;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void selectDevice() {
+        std::uint32_t count = 0;
+        vkEnumeratePhysicalDevices(instance, &count, nullptr);
+        if (!count) throw std::runtime_error("no Vulkan device available");
+        std::vector<VkPhysicalDevice> candidates(count);
+        vkEnumeratePhysicalDevices(instance, &count, candidates.data());
+        for (VkPhysicalDevice candidate : candidates) {
+            if (suitable(candidate, queue_family)) {
+                physical_device = candidate;
+                return;
+            }
+        }
+        throw std::runtime_error("no Vulkan graphics/present queue available");
+    }
+
+    void createDevice() {
+        const float priority = 1.0f;
+        VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        queue_info.queueFamilyIndex = queue_family;
+        queue_info.queueCount = 1;
+        queue_info.pQueuePriorities = &priority;
+        const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        info.queueCreateInfoCount = 1;
+        info.pQueueCreateInfos = &queue_info;
+        info.enabledExtensionCount = 1;
+        info.ppEnabledExtensionNames = extensions;
+        check(vkCreateDevice(physical_device, &info, nullptr, &device), "create Vulkan device");
+        vkGetDeviceQueue(device, queue_family, 0, &queue);
+    }
+
+    void createSwapchain(GLFWwindow* window) {
+        VkSurfaceCapabilitiesKHR capabilities{};
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities);
+        std::uint32_t format_count = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, nullptr);
+        std::vector<VkSurfaceFormatKHR> formats(format_count);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, formats.data());
+        format = formats.front().format;
+        for (const VkSurfaceFormatKHR candidate : formats) {
+            if (candidate.format == VK_FORMAT_B8G8R8A8_SRGB) format = candidate.format;
+        }
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        extent = capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()
+            ? capabilities.currentExtent
+            : VkExtent2D{static_cast<std::uint32_t>(std::max(width, 1)), static_cast<std::uint32_t>(std::max(height, 1))};
+        std::uint32_t image_count = capabilities.minImageCount + 1;
+        if (capabilities.maxImageCount) image_count = std::min(image_count, capabilities.maxImageCount);
+        VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+        info.surface = surface;
+        info.minImageCount = image_count;
+        info.imageFormat = format;
+        info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+        info.imageExtent = extent;
+        info.imageArrayLayers = 1;
+        info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.preTransform = capabilities.currentTransform;
+        info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        info.clipped = VK_TRUE;
+        check(vkCreateSwapchainKHR(device, &info, nullptr, &swapchain), "create swapchain");
+        std::uint32_t actual_count = 0;
+        vkGetSwapchainImagesKHR(device, swapchain, &actual_count, nullptr);
+        std::vector<VkImage> images(actual_count);
+        vkGetSwapchainImagesKHR(device, swapchain, &actual_count, images.data());
+        views.resize(images.size());
+        for (std::size_t index = 0; index < images.size(); ++index) {
+            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            view.image = images[index];
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.format = format;
+            view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            check(vkCreateImageView(device, &view, nullptr, &views[index]), "create image view");
+        }
+    }
+
+    void createRenderPass() {
+        VkAttachmentDescription color{};
+        color.format = format;
+        color.samples = VK_SAMPLE_COUNT_1_BIT;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        VkAttachmentReference reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &reference;
+        VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        info.attachmentCount = 1;
+        info.pAttachments = &color;
+        info.subpassCount = 1;
+        info.pSubpasses = &subpass;
+        check(vkCreateRenderPass(device, &info, nullptr, &render_pass), "create render pass");
+    }
+
+    void createFramebuffers() {
+        framebuffers.resize(views.size());
+        for (std::size_t index = 0; index < views.size(); ++index) {
+            VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            info.renderPass = render_pass;
+            info.attachmentCount = 1;
+            info.pAttachments = &views[index];
+            info.width = extent.width;
+            info.height = extent.height;
+            info.layers = 1;
+            check(vkCreateFramebuffer(device, &info, nullptr, &framebuffers[index]), "create framebuffer");
+        }
+    }
+
+    void createCommands() {
+        VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pool.queueFamilyIndex = queue_family;
+        check(vkCreateCommandPool(device, &pool, nullptr, &command_pool), "create command pool");
+        commands.resize(framebuffers.size());
+        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocation.commandPool = command_pool;
+        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocation.commandBufferCount = static_cast<std::uint32_t>(commands.size());
+        check(vkAllocateCommandBuffers(device, &allocation, commands.data()), "allocate command buffers");
+    }
+
+    void createSync() {
+        VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        check(vkCreateSemaphore(device, &semaphore, nullptr, &image_available), "create semaphore");
+        check(vkCreateSemaphore(device, &semaphore, nullptr, &render_finished), "create semaphore");
+        check(vkCreateFence(device, &fence_info, nullptr, &fence), "create fence");
+    }
+
+    void initializeImGui(GLFWwindow* window) {
+        VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        pool.maxSets = 1000;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &pool_size;
+        check(vkCreateDescriptorPool(device, &pool, nullptr, &descriptor_pool), "create descriptor pool");
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGui::StyleColorsDark();
+        ImGui_ImplGlfw_InitForVulkan(window, true);
+        ImGui_ImplVulkan_InitInfo info{};
+        info.ApiVersion = VK_API_VERSION_1_0;
+        info.Instance = instance;
+        info.PhysicalDevice = physical_device;
+        info.Device = device;
+        info.QueueFamily = queue_family;
+        info.Queue = queue;
+        info.DescriptorPool = descriptor_pool;
+        info.MinImageCount = static_cast<std::uint32_t>(views.size());
+        info.ImageCount = static_cast<std::uint32_t>(views.size());
+        info.PipelineInfoMain.RenderPass = render_pass;
+        info.PipelineInfoMain.Subpass = 0;
+        info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        if (!ImGui_ImplVulkan_Init(&info)) throw std::runtime_error("initialize ImGui Vulkan backend");
+    }
+};
+
+class ApplicationState {
+public:
+    void draw(GLFWwindow* window, VulkanFrontendContext& context) {
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now - last_frame_).count();
+        last_frame_ = now;
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        if (title_screen_) drawTitle();
+        else drawSimulation(window, std::min(elapsed, 0.1));
+        ImGui::Render();
+        context.render(ImGui::GetDrawData());
+    }
+
+private:
+    PhysicsSession session_;
+    WorldState world_{Dimension::Two};
+    SimulationParameters parameters_;
+    std::optional<FramePublication> publication_;
+    std::chrono::steady_clock::time_point last_frame_{std::chrono::steady_clock::now()};
+    double accumulator_{};
+    float timescale_{1.0f};
+    float body_x_{};
+    float body_y_{};
+    float body_mass_{1.0f};
+    float body_radius_{0.25f};
+    bool title_screen_{true};
+    bool running_{};
+    bool grid_{};
+    bool add_body_{};
+
+    void drawTitle() {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, {0.5f, 0.5f});
+        ImGui::SetNextWindowSize({440.0f, 240.0f}, ImGuiCond_Always);
+        ImGui::Begin("N-Body Simulator", nullptr,
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
+        ImGui::Dummy({1.0f, 20.0f});
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize("N-BODY SIMULATOR").x) * 0.5f);
+        ImGui::TextUnformatted("N-BODY SIMULATOR");
+        ImGui::Dummy({1.0f, 60.0f});
+        if (ImGui::Button("Enter simulation", {-1.0f, 36.0f}) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            title_screen_ = false;
+        }
+        ImGui::TextDisabled("Press Enter to begin");
+        ImGui::End();
+    }
+
+    void drawSimulation(GLFWwindow* window, double elapsed) {
+        parameters_.dimension = Dimension::Two;
+        parameters_.timestep = 0.01;
+        parameters_.collision.model = CollisionModel::Transparent;
+        accumulator_ += elapsed * timescale_;
+        while (running_ && accumulator_ >= parameters_.timestep) {
+            session_.step(world_, parameters_);
+            accumulator_ -= parameters_.timestep;
+        }
+        publication_ = session_.publishFrame(world_);
+        ImGui::BeginMainMenuBar();
+        if (ImGui::Button(running_ ? "Pause" : "Start")) running_ = !running_;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140.0f);
+        ImGui::SliderFloat("Timescale", &timescale_, 0.0f, 10.0f, "%.2fx");
+        ImGui::SameLine();
+        ImGui::Text("time %.3f | bodies %zu", world_.time(), world_.bodyCount());
+        ImGui::SameLine();
+        if (ImGui::Button(grid_ ? "Hide grid" : "Show grid")) grid_ = !grid_;
+        ImGui::SameLine();
+        if (ImGui::Button("Add body")) add_body_ = true;
+        ImGui::EndMainMenuBar();
+        if (add_body_) drawAddBody();
+        drawWorld(window);
+    }
+
+    void drawAddBody() {
+        ImGui::OpenPopup("Add body");
+        if (!ImGui::BeginPopupModal("Add body", &add_body_, ImGuiWindowFlags_AlwaysAutoResize)) return;
+        ImGui::TextUnformatted("Text-based single-body placement");
+        ImGui::InputFloat("X", &body_x_);
+        ImGui::InputFloat("Y", &body_y_);
+        ImGui::InputFloat("Mass", &body_mass_);
+        ImGui::InputFloat("Radius", &body_radius_);
+        if (ImGui::Button("Create")) {
+            BodyState body;
+            body.position = {body_x_, body_y_, 0.0};
+            body.mass = std::max(0.001f, body_mass_);
+            body.radius = std::max(0.001f, body_radius_);
+            world_.addBody(body);
+            add_body_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            add_body_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    void drawWorld(GLFWwindow* window) {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 origin{viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                            viewport->WorkPos.y + viewport->WorkSize.y * 0.5f + 20.0f};
+        constexpr float scale = 20.0f;
+        ImDrawList* draw = ImGui::GetForegroundDrawList();
+        if (grid_) {
+            for (int line = -20; line <= 20; ++line) {
+                const float offset = static_cast<float>(line) * scale;
+                draw->AddLine({origin.x - 20.0f * scale, origin.y + offset},
+                              {origin.x + 20.0f * scale, origin.y + offset}, 0x30384A55);
+                draw->AddLine({origin.x + offset, origin.y - 20.0f * scale},
+                              {origin.x + offset, origin.y + 20.0f * scale}, 0x30384A55);
+            }
+        }
+        if (publication_ && publication_->published()) {
+            for (const RenderBody& body : publication_->cpu_snapshot->bodies) {
+                const ImVec2 position{origin.x + static_cast<float>(body.position.x) * scale,
+                                      origin.y - static_cast<float>(body.position.y) * scale};
+                const float radius = std::clamp(static_cast<float>(body.radius * scale), 2.0f, 24.0f);
+                draw->AddCircleFilled(position, radius, body.is_static ? 0xFFB080FF : 0x80D8FFFF);
+                draw->AddCircle(position, radius, 0xFFFFFFFF, 16, 1.0f);
+            }
+        }
+        (void)window;
+    }
+};
+
+} // namespace
+
+int VulkanFrontend::run() {
+    if (!glfwInit()) throw std::runtime_error("GLFW initialization failed");
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    // Swapchain recreation is deliberately deferred to the next frontend
+    // slice; keep the prototype window fixed until that lifecycle is present.
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "N-Body Simulator", nullptr, nullptr);
+    if (!window) {
+        glfwTerminate();
+        throw std::runtime_error("GLFW window creation failed");
+    }
+    try {
+        VulkanFrontendContext context;
+        context.initialize(window);
+        ApplicationState application;
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+            application.draw(window, context);
+        }
+    } catch (...) {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        throw;
+    }
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return 0;
+}
+
+}

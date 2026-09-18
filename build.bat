@@ -68,6 +68,12 @@ where cl >nul 2>&1 || (
     exit /b 1
 )
 
+set "CMAKE_TOOLCHAIN_ARG="
+if defined VCPKG_ROOT if exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
+    set "CMAKE_TOOLCHAIN_ARG=-DCMAKE_TOOLCHAIN_FILE=\"%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake\""
+    echo Using vcpkg toolchain: %VCPKG_ROOT%
+)
+
 rem Keep a non-backslash final character so quoted paths are parsed correctly by CMake.
 set "ROOT=%~dp0."
 if /I "%BUILD_MODE%"=="legacy" (
@@ -81,9 +87,9 @@ echo Build directory: %BUILD_DIR%
 echo.
 
 if /I "%BUILD_MODE%"=="legacy" (
-    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL%
+    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
 ) else (
-    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE%
+    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
 )
 if errorlevel 1 exit /b %errorlevel%
 
