@@ -614,7 +614,7 @@ private:
         if (over_world && !ui_using_mouse && pending_scroll_ != 0.0) {
             const float old_scale = view_scale_;
             view_scale_ = std::clamp(view_scale_ * std::pow(1.15f, static_cast<float>(pending_scroll_)),
-                                      0.25f, 200.0f);
+                                      0.25f, 20000.0f);
             const ImVec2 mouse{static_cast<float>(cursor_x), static_cast<float>(cursor_y)};
             const float center_x = work_min.x + viewport->WorkSize.x * 0.5f;
             const float center_y = work_min.y + viewport->WorkSize.y * 0.5f + 20.0f;
@@ -657,19 +657,22 @@ private:
             const char* name;
             double orbit_au;
             double mass_ratio;
+            double radius_km;
         };
         constexpr std::array<PlanetDefinition, 8> planets{{
-            {"Mercury", 0.387, 1.660e-7},
-            {"Venus", 0.723, 2.447e-6},
-            {"Earth", 1.000, 3.003e-6},
-            {"Mars", 1.524, 3.227e-7},
-            {"Jupiter", 5.203, 9.545e-4},
-            {"Saturn", 9.537, 2.857e-4},
-            {"Uranus", 19.191, 4.366e-5},
-            {"Neptune", 30.070, 5.151e-5}
+            {"Mercury", 0.387, 1.660e-7, 2439.7},
+            {"Venus", 0.723, 2.447e-6, 6051.8},
+            {"Earth", 1.000, 3.003e-6, 6371.0},
+            {"Mars", 1.524, 3.227e-7, 3389.5},
+            {"Jupiter", 5.203, 9.545e-4, 69911.0},
+            {"Saturn", 9.537, 2.857e-4, 58232.0},
+            {"Uranus", 19.191, 4.366e-5, 25362.0},
+            {"Neptune", 30.070, 5.151e-5, 24622.0}
         }};
         constexpr double neptune_orbit = 400.0;
         constexpr double scale = neptune_orbit / 30.070;
+        constexpr double kilometers_per_au = 149597870.7;
+        constexpr double radius_scale = neptune_orbit / (30.070 * kilometers_per_au);
         // Calibrated so the Earth orbit is approximately one Julian year in
         // simulation seconds after Neptune is mapped to radius 400.
         constexpr double gravitational_constant = 9.33076e-11;
@@ -681,7 +684,7 @@ private:
         world_ = WorldState(Dimension::Two);
         BodyState sun;
         sun.mass = sun_mass;
-        sun.radius = 5.0;
+        sun.radius = 696340.0 * radius_scale;
         sun.is_static = true;
         sun.kind = BodyKind::Star;
         world_.addBody(sun);
@@ -694,7 +697,7 @@ private:
             body.position = {orbit * std::cos(angle), orbit * std::sin(angle), 0.0};
             body.velocity = {-speed * std::sin(angle), speed * std::cos(angle), 0.0};
             body.mass = planet.mass_ratio;
-            body.radius = 1.5;
+            body.radius = planet.radius_km * radius_scale;
             body.kind = BodyKind::Ordinary;
             world_.addBody(body);
         }
@@ -737,16 +740,20 @@ private:
             const float world_width = viewport->WorkSize.x / view_scale_;
             const float world_height = viewport->WorkSize.y / view_scale_;
             const float grid_step = gridStep();
-            const int min_x = static_cast<int>(std::floor(camera_x_ - world_width * 0.5f / grid_step)) - 1;
-            const int max_x = static_cast<int>(std::ceil(camera_x_ + world_width * 0.5f / grid_step)) + 1;
-            const int min_y = static_cast<int>(std::floor(camera_y_ - world_height * 0.5f / grid_step)) - 1;
-            const int max_y = static_cast<int>(std::ceil(camera_y_ + world_height * 0.5f / grid_step)) + 1;
-            for (int line = min_x; line <= max_x; ++line) {
+            const float left = camera_x_ - world_width * 0.5f;
+            const float right = camera_x_ + world_width * 0.5f;
+            const float bottom = camera_y_ - world_height * 0.5f;
+            const float top = camera_y_ + world_height * 0.5f;
+            const int first_x = static_cast<int>(std::floor(left / grid_step)) - 1;
+            const int last_x = static_cast<int>(std::ceil(right / grid_step)) + 1;
+            const int first_y = static_cast<int>(std::floor(bottom / grid_step)) - 1;
+            const int last_y = static_cast<int>(std::ceil(top / grid_step)) + 1;
+            for (int line = first_x; line <= last_x; ++line) {
                 const float world = static_cast<float>(line) * grid_step;
                 const float x = origin.x + world * view_scale_;
                 draw->AddLine({x, work_min.y}, {x, work_max.y}, 0x30384A55);
             }
-            for (int line = min_y; line <= max_y; ++line) {
+            for (int line = first_y; line <= last_y; ++line) {
                 const float world = static_cast<float>(line) * grid_step;
                 const float y = origin.y - world * view_scale_;
                 draw->AddLine({work_min.x, y}, {work_max.x, y}, 0x30384A55);
