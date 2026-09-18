@@ -185,9 +185,12 @@ CollisionAssessment assessBody(const Body& body, double impact_energy,
             specific_energy, damage_limit, fragmentation_limit};
 }
 
-void applyDeferredAbsorption(WorldState& world) {
+void applyDeferredAbsorption(WorldState& world, const CollisionSettings& settings) {
+    if (!settings.classifier.absorption_enabled) return;
+
     struct Request { BodyId survivor; BodyId removed; bool destroys_absorber; };
     std::vector<Request> requests;
+    requests.reserve(world.collisionEvents().size());
     std::unordered_set<std::uint64_t> removed_ids;
     for (const CollisionEvent& event : world.collisionEvents()) {
         if (!event.absorption_survivor.isValid() || !event.absorption_removed.isValid()) continue;
@@ -198,14 +201,16 @@ void applyDeferredAbsorption(WorldState& world) {
     }
     if (requests.empty()) return;
 
-    auto find_index = [&world](BodyId id) -> std::size_t {
-        for (std::size_t index = 0; index < world.bodyCount(); ++index) {
-            if (world.body(index).id == id) return index;
-        }
-        return world.bodyCount();
+    std::unordered_map<std::uint64_t, std::size_t> index_by_id;
+    index_by_id.reserve(world.bodyCount());
+    for (std::size_t index = 0; index < world.bodyCount(); ++index) {
+        index_by_id.emplace(world.body(index).id.value, index);
+    }
+    const auto find_index = [&index_by_id, body_count = world.bodyCount()](BodyId id) -> std::size_t {
+        const auto found = index_by_id.find(id.value);
+        return found == index_by_id.end() ? body_count : found->second;
     };
 
-    constexpr double pi = 3.14159265358979323846;
     for (const Request request : requests) {
         const std::size_t survivor_index = find_index(request.survivor);
         const std::size_t removed_index = find_index(request.removed);
@@ -234,12 +239,13 @@ void applyDeferredAbsorption(WorldState& world) {
                 + removed.radius * removed.radius * removed.radius;
             survivor.radius = std::cbrt(std::max(0.0, combined_volume));
         }
-        survivor.accumulated_damage = 0.0;
+        if (!request.destroys_absorber) survivor.accumulated_damage = 0.0;
     }
 
     std::vector<BodyState> replacement;
     replacement.reserve(world.bodyCount() - removed_ids.size());
-    for (const BodyState& body : world.snapshotBodies()) {
+    for (std::size_t index = 0; index < world.bodyCount(); ++index) {
+        const BodyState body = world.body(index).snapshot();
         if (!removed_ids.contains(body.id.value)) replacement.push_back(body);
     }
     world.replaceBodies(std::move(replacement));
@@ -419,11 +425,15 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
             }
         }
 
-        std::unordered_set<std::uint64_t> pending_removal;
+        world.reserveCollisionEvents(workspace.candidate_pairs.size());
+        std::vector<std::uint8_t> pending_removal;
+        if (effective_settings.classifier.absorption_enabled) {
+            pending_removal.assign(world.bodyCount(), 0);
+        }
         for (const auto [first, second] : workspace.candidate_pairs) {
                 MutableBodyView first_body = world.mutableBody(first);
                 MutableBodyView second_body = world.mutableBody(second);
-                if (pending_removal.contains(first_body.id.value) || pending_removal.contains(second_body.id.value)) continue;
+                if (!pending_removal.empty() && (pending_removal[first] || pending_removal[second])) continue;
                 const Vec3 displacement = second_body.position - first_body.position;
                 const double distance_squared = displacement.lengthSquared(dimension);
                 const double combined_radius = first_body.radius + second_body.radius;
@@ -444,7 +454,8 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
                 }
 
                 if (absorption.survivor.isValid()) {
-                    pending_removal.insert(absorption.removed.value);
+                    const std::size_t removed_index = absorption.survivor == first_body.id ? second : first;
+                    pending_removal[removed_index] = 1;
                 } else if (inverse_mass_sum > 0.0 && penetration > 0.0) {
                     const Vec3 correction = normal * (penetration / inverse_mass_sum);
                     first_body.position -= correction * first_inverse_mass;
@@ -515,7 +526,7 @@ void CollisionSystem::resolveContacts(WorldState& world, const CollisionSettings
 }
 
 void CollisionSystem::applyDeferredOutcomes(WorldState& world, const CollisionSettings& settings) {
-    applyDeferredAbsorption(world);
+    applyDeferredAbsorption(world, settings);
     applyDeferredDamage(world);
     applyDeferredFragmentation(world, settings);
 }

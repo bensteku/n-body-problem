@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
         const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 256;
         const std::size_t fragment_count = argc > 3 ? std::stoull(argv[3]) : 4;
         const std::size_t reserved_capacity = argc > 4 ? std::stoull(argv[4]) : 0;
+        const bool absorption_enabled = argc > 5 && std::stoull(argv[5]) != 0;
         if (body_count == 0 || fragment_count < 2) {
             std::cerr << "fragmentation benchmark requires bodies > 0 and fragments >= 2\n";
             return 2;
@@ -63,6 +64,7 @@ int main(int argc, char** argv) {
         settings.maximum_fragments = fragment_count;
         settings.maximum_fragment_count = body_count * fragment_count;
         settings.classifier.force_fragmentation = true;
+        settings.classifier.absorption_enabled = absorption_enabled;
         // This benchmark measures fragmentation while hard-body mode is already active.
         world.setActiveCollisionModel(nbody::CollisionModel::HardBody);
 
@@ -80,6 +82,7 @@ int main(int argc, char** argv) {
                   << " initial_bodies=" << body_count
                   << " requested_fragments=" << fragment_count
                   << " reserved_capacity=" << reserved_capacity
+                  << " absorption_enabled=" << (absorption_enabled ? "true" : "false")
                   << " collision_events=" << world.collisionEvents().size()
                   << " final_bodies=" << world.bodyCount()
                   << " growth=" << (world.bodyCount() - body_count)

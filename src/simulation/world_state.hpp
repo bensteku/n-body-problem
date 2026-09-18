@@ -57,6 +57,7 @@ public:
     ConstBodyView body(std::size_t index) const { return storage_.view(index); }
     MutableBodyView mutableBody(std::size_t index) { return storage_.mutableView(index); }
     void clearCollisionEvents() { collision_events_.clear(); }
+    void reserveCollisionEvents(std::size_t count) { collision_events_.reserve(count); }
     void recordCollisionEvent(CollisionEvent event) { collision_events_.push_back(event); }
     void replaceBodies(std::vector<BodyState> bodies);
 
