@@ -13,31 +13,33 @@
 
 namespace nbody {
 
-namespace {
-
-struct SimdCollisionWorkspace {
-    SimdCollisionWorkspace(Dimension dimension, const CollisionBroadPhaseSettings& settings)
-        : tree(dimension, settings.leaf_capacity, settings.maximum_depth, settings.looseness),
-          leaf_capacity(settings.leaf_capacity), maximum_depth(settings.maximum_depth),
-          looseness(settings.looseness) {}
-
-    SpatialTree tree;
-    std::vector<std::pair<std::size_t, std::size_t>> contacts;
-    std::size_t leaf_capacity;
-    std::size_t maximum_depth;
-    double looseness;
-};
-
-SimdCollisionWorkspace& collisionWorkspace(Dimension dimension,
+void SimdCollisionWorkspace::prepare(Dimension dimension,
     const CollisionBroadPhaseSettings& settings) {
-    thread_local std::unique_ptr<SimdCollisionWorkspace> workspace;
-    if (!workspace || workspace->tree.dimension() != dimension
-        || workspace->leaf_capacity != settings.leaf_capacity
-        || workspace->maximum_depth != settings.maximum_depth
-        || workspace->looseness != settings.looseness) {
-        workspace = std::make_unique<SimdCollisionWorkspace>(dimension, settings);
+    if (!tree_ || tree_->dimension() != dimension
+        || leaf_capacity_ != settings.leaf_capacity
+        || maximum_depth_ != settings.maximum_depth
+        || looseness_ != settings.looseness) {
+        tree_ = std::make_unique<SpatialTree>(dimension, settings.leaf_capacity,
+                                              settings.maximum_depth, settings.looseness);
+        leaf_capacity_ = settings.leaf_capacity;
+        maximum_depth_ = settings.maximum_depth;
+        looseness_ = settings.looseness;
     }
-    return *workspace;
+}
+
+SpatialTree& SimdCollisionWorkspace::tree() { return *tree_; }
+
+std::vector<std::pair<std::size_t, std::size_t>>& SimdCollisionWorkspace::contacts() {
+    return contacts_;
+}
+
+namespace {
+void resolveContactsWithFallbackWorkspace(WorldState& world, const CollisionSettings& settings,
+    double gravitational_constant) {
+    thread_local SimdCollisionWorkspace simd_workspace;
+    thread_local ScalarCollisionWorkspace scalar_workspace;
+    SimdCollisionSystem::resolveContacts(world, settings, gravitational_constant,
+                                         simd_workspace, scalar_workspace);
 }
 
 void filterContactPairsAvx2(const WorldState& world, Dimension dimension,
@@ -103,23 +105,30 @@ void filterContactPairsAvx2(const WorldState& world, Dimension dimension,
 
 void SimdCollisionSystem::resolveContacts(WorldState& world,
     const CollisionSettings& settings, double gravitational_constant) {
+    resolveContactsWithFallbackWorkspace(world, settings, gravitational_constant);
+}
+
+void SimdCollisionSystem::resolveContacts(WorldState& world, const CollisionSettings& settings,
+    double gravitational_constant, SimdCollisionWorkspace& simd_workspace,
+    ScalarCollisionWorkspace& scalar_workspace) {
     static const bool avx2_available = detectSimdCapabilities().avx2;
     if (!avx2_available || settings.model != CollisionModel::HardBody
         || world.activeCollisionModel() != CollisionModel::HardBody) {
-        ScalarCollisionSystem::resolveContacts(world, settings, gravitational_constant);
+        ScalarCollisionSystem::resolveContacts(world, settings, gravitational_constant,
+                                                scalar_workspace);
         return;
     }
 
-    SimdCollisionWorkspace& workspace = collisionWorkspace(world.dimension(), settings.broad_phase);
-    auto& contacts = workspace.contacts;
+    simd_workspace.prepare(world.dimension(), settings.broad_phase);
+    auto& contacts = simd_workspace.contacts();
     contacts.clear();
 
     // Collision response mutates the authoritative Vec3 positions. Keep the
     // component arrays coherent before the AVX2 gather phase.
     world.bodyStorage().synchronizePositionComponents();
     if (settings.broad_phase.spatial_tree_enabled) {
-        workspace.tree.rebuild(world.bodyStorage());
-        workspace.tree.forEachPotentialBodyPairBatch(world.bodyStorage(),
+        simd_workspace.tree().rebuild(world.bodyStorage());
+        simd_workspace.tree().forEachPotentialBodyPairBatch(world.bodyStorage(),
             [&](std::span<const std::pair<std::size_t, std::size_t>> candidates) {
                 filterContactPairsAvx2(world, world.dimension(), candidates, contacts);
             });
@@ -142,7 +151,7 @@ void SimdCollisionSystem::resolveContacts(WorldState& world,
         if (batch_size != 0) flush();
     }
     ScalarCollisionSystem::resolveContactsForPairs(world, settings, gravitational_constant,
-                                                   contacts);
+                                                   contacts, scalar_workspace);
 }
 
 void SimdCollisionSystem::applyDeferredOutcomes(WorldState& world,

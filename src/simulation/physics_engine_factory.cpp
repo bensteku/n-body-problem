@@ -5,11 +5,14 @@
 #include "simulation/solvers/simd_full_physics_engine.hpp"
 #include "simulation/solvers/simd_approximated_physics_engine.hpp"
 
+#include <stdexcept>
+
 namespace nbody {
 
 std::unique_ptr<IPhysicsEngine> createPhysicsEngine(const SolverConfiguration& configuration) {
-    const bool approximated = configuration.kind == SolverKind::Approximated
-        || configuration.force_model == ForceModel::BarnesHut;
+    const SolverConfigurationValidation validation = validateSolverConfiguration(configuration);
+    if (!validation.valid) throw std::invalid_argument(validation.message.data());
+    const bool approximated = configuration.kind == SolverKind::Approximated;
     switch (configuration.backend) {
     case ComputeBackend::Scalar:
         if (approximated) return std::make_unique<ScalarApproximatedPhysicsEngine>();

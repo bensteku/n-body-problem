@@ -13,20 +13,31 @@
 
 namespace nbody {
 
+void ScalarCollisionWorkspace::prepare(Dimension dimension,
+    const CollisionBroadPhaseSettings& settings) {
+    if (!tree_ || tree_->dimension() != dimension
+        || leaf_capacity_ != settings.leaf_capacity
+        || maximum_depth_ != settings.maximum_depth
+        || looseness_ != settings.looseness) {
+        tree_ = std::make_unique<SpatialTree>(dimension, settings.leaf_capacity,
+                                              settings.maximum_depth, settings.looseness);
+        leaf_capacity_ = settings.leaf_capacity;
+        maximum_depth_ = settings.maximum_depth;
+        looseness_ = settings.looseness;
+    }
+}
+
+SpatialTree& ScalarCollisionWorkspace::tree() { return *tree_; }
+
+std::vector<std::pair<std::size_t, std::size_t>>& ScalarCollisionWorkspace::candidatePairs() {
+    return candidate_pairs_;
+}
+
+std::vector<std::uint8_t>& ScalarCollisionWorkspace::pendingRemoval() {
+    return pending_removal_;
+}
+
 namespace {
-
-struct CollisionWorkspace {
-    CollisionWorkspace(Dimension dimension, const CollisionBroadPhaseSettings& settings)
-        : tree(dimension, settings.leaf_capacity, settings.maximum_depth, settings.looseness),
-          leaf_capacity(settings.leaf_capacity), maximum_depth(settings.maximum_depth),
-          looseness(settings.looseness) {}
-
-    SpatialTree tree;
-    std::vector<std::pair<std::size_t, std::size_t>> candidate_pairs;
-    std::size_t leaf_capacity;
-    std::size_t maximum_depth;
-    double looseness;
-};
 
 struct AbsorptionDecision {
     BodyId survivor;
@@ -70,15 +81,11 @@ AbsorptionDecision chooseAbsorption(const FirstBody& first, const SecondBody& se
                                  : AbsorptionDecision{solid.id, absorber.id};
 }
 
-CollisionWorkspace& collisionWorkspace(Dimension dimension, const CollisionBroadPhaseSettings& settings) {
-    thread_local std::unique_ptr<CollisionWorkspace> workspace;
-    if (!workspace || workspace->tree.dimension() != dimension
-        || workspace->leaf_capacity != settings.leaf_capacity
-        || workspace->maximum_depth != settings.maximum_depth
-        || workspace->looseness != settings.looseness) {
-        workspace = std::make_unique<CollisionWorkspace>(dimension, settings);
-    }
-    return *workspace;
+ScalarCollisionWorkspace& fallbackCollisionWorkspace(Dimension dimension,
+    const CollisionBroadPhaseSettings& settings) {
+    thread_local ScalarCollisionWorkspace workspace;
+    workspace.prepare(dimension, settings);
+    return workspace;
 }
 
 CollisionOutcome classify(double specific_energy, double damage_limit, double fragmentation_limit,
@@ -374,16 +381,33 @@ void applyDeferredFragmentation(WorldState& world, const CollisionSettings& sett
 
 void ScalarCollisionSystem::resolveContacts(WorldState& world, const CollisionSettings& settings,
     double gravitational_constant) {
-    resolveContactsInternal(world, settings, gravitational_constant, nullptr);
+    ScalarCollisionWorkspace& workspace = fallbackCollisionWorkspace(
+        world.dimension(), settings.broad_phase);
+    resolveContacts(world, settings, gravitational_constant, workspace);
+}
+
+void ScalarCollisionSystem::resolveContacts(WorldState& world, const CollisionSettings& settings,
+    double gravitational_constant, ScalarCollisionWorkspace& workspace) {
+    resolveContactsInternal(world, settings, gravitational_constant, workspace, nullptr);
 }
 
 void ScalarCollisionSystem::resolveContactsForPairs(WorldState& world, const CollisionSettings& settings,
     double gravitational_constant, std::span<const std::pair<std::size_t, std::size_t>> pairs) {
-    resolveContactsInternal(world, settings, gravitational_constant, &pairs);
+    ScalarCollisionWorkspace& workspace = fallbackCollisionWorkspace(
+        world.dimension(), settings.broad_phase);
+    resolveContactsForPairs(world, settings, gravitational_constant, pairs, workspace);
+}
+
+void ScalarCollisionSystem::resolveContactsForPairs(WorldState& world,
+    const CollisionSettings& settings, double gravitational_constant,
+    std::span<const std::pair<std::size_t, std::size_t>> pairs,
+    ScalarCollisionWorkspace& workspace) {
+    resolveContactsInternal(world, settings, gravitational_constant, workspace, &pairs);
 }
 
 void ScalarCollisionSystem::resolveContactsInternal(WorldState& world,
     const CollisionSettings& settings, double gravitational_constant,
+    ScalarCollisionWorkspace& workspace,
     const std::span<const std::pair<std::size_t, std::size_t>>* supplied_pairs) {
     CollisionSettings effective_settings = settings;
     world.clearCollisionEvents();
@@ -424,18 +448,17 @@ void ScalarCollisionSystem::resolveContactsInternal(WorldState& world,
     case CollisionModel::HardBody: {
         const Dimension dimension = world.dimension();
         const double restitution = std::clamp(effective_settings.restitution, 0.0, 1.0);
-        CollisionWorkspace* workspace = nullptr;
+        workspace.prepare(dimension, effective_settings.broad_phase);
         std::span<const std::pair<std::size_t, std::size_t>> candidate_pairs;
         if (supplied_pairs != nullptr) {
             // The SIMD narrow phase already owns the filtered pair list. Do
             // not copy it into the scalar workspace before resolving it.
             candidate_pairs = *supplied_pairs;
         } else {
-            workspace = &collisionWorkspace(dimension, effective_settings.broad_phase);
-            auto& generated_pairs = workspace->candidate_pairs;
+            auto& generated_pairs = workspace.candidatePairs();
             if (effective_settings.broad_phase.spatial_tree_enabled) {
-                workspace->tree.rebuild(world.bodyStorage());
-                workspace->tree.potentialContactPairs(world.bodyStorage(), generated_pairs);
+                workspace.tree().rebuild(world.bodyStorage());
+                workspace.tree().potentialContactPairs(world.bodyStorage(), generated_pairs);
             } else {
                 generated_pairs.clear();
                 for (std::size_t first = 0; first < world.bodyCount(); ++first) {
@@ -448,7 +471,8 @@ void ScalarCollisionSystem::resolveContactsInternal(WorldState& world,
         }
 
         world.reserveCollisionEvents(candidate_pairs.size());
-        std::vector<std::uint8_t> pending_removal;
+        auto& pending_removal = workspace.pendingRemoval();
+        pending_removal.clear();
         if (effective_settings.classifier.absorption_enabled) {
             pending_removal.assign(world.bodyCount(), 0);
         }

@@ -15,12 +15,6 @@ bool containsPoint(const SpatialBounds& bounds, const Vec3& position, Dimension 
             || (position.z >= bounds.minimum.z && position.z <= bounds.maximum.z));
 }
 
-double extent(const SpatialBounds& bounds, Dimension dimension) {
-    return std::max({bounds.maximum.x - bounds.minimum.x,
-                     bounds.maximum.y - bounds.minimum.y,
-                     dimension == Dimension::Three ? bounds.maximum.z - bounds.minimum.z : 0.0});
-}
-
 Vec3 accelerationFromNode(const BarnesHutTree& tree, std::size_t node_index, std::size_t target,
                           const Vec3& target_position, const WorldState& world, double gravitational_constant,
                           double softening_squared, double opening_angle,
@@ -40,7 +34,7 @@ Vec3 accelerationFromNode(const BarnesHutTree& tree, std::size_t node_index, std
         const double distance = std::sqrt(distance_squared);
         const bool target_inside = containsPoint(node.bounds, target_position, dimension);
         if (node.child_count != 0 && !target_inside && distance > 0.0
-            && extent(node.bounds, dimension) / distance < opening_angle) {
+            && node.extent / distance < opening_angle) {
             acceleration += (node.center_of_mass - target_position)
                 * (gravitational_constant * node.mass / (distance_squared * distance));
             continue;
@@ -106,20 +100,31 @@ Vec3 accelerationFromNode(const BarnesHutTree& tree, std::size_t node_index, std
 
 }
 
-void calculateAvx2BarnesHutAccelerations(const WorldState& world, const SimulationParameters& parameters,
-                                         const BarnesHutTree& tree, std::vector<Vec3>& output) {
-    output.assign(world.bodyCount(), Vec3{});
+void calculateAvx2BarnesHutAccelerationsRange(const WorldState& world,
+                                              const SimulationParameters& parameters,
+                                              const BarnesHutTree& tree,
+                                              std::vector<Vec3>& output,
+                                              std::vector<std::size_t>& traversal_stack,
+                                              std::size_t begin, std::size_t end) {
     const double opening_angle = std::clamp(parameters.solver.barnes_hut.opening_angle, 0.0, 10.0);
     const double softening_squared = parameters.softening_length * parameters.softening_length;
-    std::vector<std::size_t> traversal_stack;
-    traversal_stack.reserve(tree.nodeCount());
-    for (std::size_t target = 0; target < world.bodyCount(); ++target) {
+    if (traversal_stack.capacity() < tree.nodeCount()) traversal_stack.reserve(tree.nodeCount());
+    for (std::size_t target = begin; target < end; ++target) {
         if (!world.body(target).is_static()) {
             output[target] = accelerationFromNode(tree, 0, target, world.body(target).position, world,
                                                   parameters.gravitational_constant,
                                                   softening_squared, opening_angle, traversal_stack);
         }
     }
+}
+
+void calculateAvx2BarnesHutAccelerations(const WorldState& world,
+                                         const SimulationParameters& parameters,
+                                         const BarnesHutTree& tree, std::vector<Vec3>& output,
+                                         std::vector<std::size_t>& traversal_stack) {
+    output.assign(world.bodyCount(), Vec3{});
+    calculateAvx2BarnesHutAccelerationsRange(world, parameters, tree, output,
+                                              traversal_stack, 0, world.bodyCount());
 }
 
 }

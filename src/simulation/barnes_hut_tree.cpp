@@ -12,6 +12,7 @@ BarnesHutTree::BarnesHutTree(Dimension dimension, std::size_t leaf_capacity,
 
 void BarnesHutTree::rebuild(const BodyStorage& bodies) {
     nodes_.clear();
+    simd_nodes_.clear();
     packed_indices_.clear();
     packed_x_.clear();
     packed_y_.clear();
@@ -55,6 +56,18 @@ void BarnesHutTree::rebuild(const BodyStorage& bodies) {
         node.packed_y = packed_y_.data() + node.packed_offset;
         node.packed_z = packed_z_.data() + node.packed_offset;
         node.packed_masses = packed_masses_.data() + node.packed_offset;
+    }
+    simd_nodes_.resize(nodes_.size());
+    for (std::size_t index = 0; index < nodes_.size(); ++index) {
+        const Node& node = nodes_[index];
+        const double node_extent = std::max({node.bounds.maximum.x - node.bounds.minimum.x,
+                                             node.bounds.maximum.y - node.bounds.minimum.y,
+                                             dimension_ == Dimension::Three
+                                                 ? node.bounds.maximum.z - node.bounds.minimum.z : 0.0});
+        simd_nodes_[index] = {node.bounds, node_extent, node.children, node.child_count,
+                              node.packed_count, node.packed_indices, node.packed_x,
+                              node.packed_y, node.packed_z, node.packed_masses,
+                              node.mass, node.center_of_mass};
     }
 }
 

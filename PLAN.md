@@ -35,6 +35,8 @@ The engine concept is an execution boundary, not a demand that every engine shar
 
 The non-negotiable cross-engine contract is numerical and behavioral parity, especially against Scalar Full as the reference, within explicit tolerances. Parity includes positions, velocities, conserved quantities, body counts and identities, collision/fragmentation/absorption outcomes, and documented determinism guarantees. Tests must distinguish intended floating-point tolerance from genuine semantic divergence. Performance-oriented backend specialization is encouraged so long as it preserves that contract.
 
+The engine boundary must also account for presentation handoff from the beginning. A completed simulation frame is published through a renderer-facing frame contract rather than by exposing mutable `WorldState` internals. CPU engines may publish read-only CPU views backed by reusable frame storage; a Vulkan engine should be able to publish device-local or shared Vulkan resources directly to the renderer, together with the synchronization information required for safe consumption. The common contract must not require GPU readback or an unnecessary CPU copy, while allowing the Scalar and SIMD implementations to use staging/upload paths appropriate to their memory domain.
+
 ## 2. Firm project constraints
 
 ### 2.1 Platform and toolchain
@@ -174,6 +176,26 @@ Application
 ~~~
 
 The renderer and UI communicate with the session through high-level commands and read-only views. The solver receives a simulation state and numerical configuration and returns an updated state or force/acceleration results.
+
+### 4.1 Simulation-to-renderer frame publication
+
+Simulation engines own mutable numerical state; renderers consume immutable published frames. The frame-publication boundary should support both CPU-backed and Vulkan-backed data without making the simulation core depend on Vulkan types.
+
+The renderer-facing contract should provide, as applicable:
+
+- positions and stable body IDs;
+- body count, active/dead state, and compaction/remapping information;
+- render-relevant physical and visual properties;
+- simulation time and interpolation metadata;
+- diagnostics and presentation-safe event summaries;
+- a lifetime/lease guaranteeing that published data remains valid until rendering is complete;
+- a synchronization token or equivalent readiness status.
+
+The session should use reusable double- or triple-buffered frame storage so simulation and rendering can overlap without mutating data currently being consumed. A CPU engine may write a reusable host frame and arrange one upload into a Vulkan staging or persistently mapped buffer. A Vulkan engine using the same device should be able to export a renderer-consumable storage buffer or image directly, with explicit Vulkan barriers, queue ownership, and timeline-semaphore/fence requirements. The renderer must not need to know whether a frame originated from Scalar, SIMD, or GPU execution.
+
+Dynamic body creation, fragmentation, absorption, and compaction must be reflected through stable IDs and frame metadata rather than assuming that a renderer can retain raw body-array indices across frames. GPU-capable paths should prefer capacity-managed buffers and append/compaction passes over synchronous readback. CPU-visible diagnostics and collision events may be transferred through a separate, compact asynchronous channel instead of forcing the complete numerical state back to the host.
+
+This frame-publication design should precede further physics-module expansion. It establishes the ownership, lifetime, synchronization, and dynamic-cardinality rules that Scalar, SIMD, and Vulkan engines must all satisfy while preserving backend-specific internal layouts.
 
 ## 5. Suggested source layout
 
@@ -1369,6 +1391,14 @@ pause or enter Edit Mode
     → validate state equivalence
     → optionally resume
 ~~~
+
+The runtime orchestration layer should own this boundary rather than making
+the application coordinate raw engine pointers. A physics session owns the
+selected engine, applies the selected solver configuration at each step,
+publishes renderer frames, and performs candidate-engine construction and
+validation before atomically replacing the active engine. The numerical
+world remains the state-transfer object; switching backends must not require
+the renderer or UI to understand backend-specific storage.
 
 The dimension is not switchable after startup. A backend change must not alter physical state merely because the storage layout changes.
 

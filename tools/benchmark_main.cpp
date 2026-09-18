@@ -7,12 +7,33 @@
 #include "simulation/simd_collision_system.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <string>
 #include <string_view>
 
 namespace {
+
+bool worldsNumericallyClose(const nbody::WorldState& first, const nbody::WorldState& second,
+                            double tolerance = 1e-10) {
+    if (first.bodyCount() != second.bodyCount() || first.dimension() != second.dimension()) return false;
+    for (std::size_t index = 0; index < first.bodyCount(); ++index) {
+        const nbody::ConstBodyView first_body = first.body(index);
+        const nbody::ConstBodyView second_body = second.body(index);
+        const auto close = [tolerance](double left, double right) {
+            return std::abs(left - right) <= tolerance
+                + tolerance * std::max(std::abs(left), std::abs(right));
+        };
+        if (!close(first_body.position.x, second_body.position.x)
+            || !close(first_body.position.y, second_body.position.y)
+            || !close(first_body.position.z, second_body.position.z)
+            || !close(first_body.velocity.x, second_body.velocity.x)
+            || !close(first_body.velocity.y, second_body.velocity.y)
+            || !close(first_body.velocity.z, second_body.velocity.z)) return false;
+    }
+    return true;
+}
 
 template <typename Solver>
 int runIsolatedSolver(std::string_view label, std::size_t body_count, int steps,
@@ -36,6 +57,163 @@ int runIsolatedSolver(std::string_view label, std::size_t body_count, int steps,
               << " implementation=" << solver.info(nbody::Dimension::Two).name
               << " finite=" << (world.diagnostics().finite ? "true" : "false") << '\n';
     return world.isValid() ? 0 : 1;
+}
+
+int runLargeBarnesHutComparison(std::size_t body_count, int steps) {
+    constexpr nbody::Dimension dimension = nbody::Dimension::Two;
+    nbody::WorldState scalar_world = nbody::WorldState::deterministic(body_count, dimension, 42);
+    nbody::WorldState simd_world = nbody::WorldState::deterministic(body_count, dimension, 42);
+    nbody::SimulationParameters parameters;
+    parameters.dimension = dimension;
+    parameters.gravitational_constant = 0.1;
+    parameters.timestep = 0.001;
+    parameters.collision.model = nbody::CollisionModel::Transparent;
+    parameters.solver.force_model = nbody::ForceModel::BarnesHut;
+    nbody::ScalarApproximatedPhysicsEngine scalar_solver;
+    nbody::SimdApproximatedPhysicsEngine simd_solver;
+
+    const auto scalar_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) scalar_solver.step(scalar_world, parameters);
+    const auto scalar_elapsed = std::chrono::steady_clock::now() - scalar_start;
+
+    const auto simd_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) simd_solver.step(simd_world, parameters);
+    const auto simd_elapsed = std::chrono::steady_clock::now() - simd_start;
+
+    const double scalar_ms = std::chrono::duration<double, std::milli>(scalar_elapsed).count();
+    const double simd_ms = std::chrono::duration<double, std::milli>(simd_elapsed).count();
+    std::cout << "large Barnes-Hut comparison dimension=2D"
+              << " steps=" << steps
+              << " bodies=" << body_count
+              << " scalar_ms=" << scalar_ms
+              << " simd_ms=" << simd_ms
+              << " speedup=" << (simd_ms > 0.0 ? scalar_ms / simd_ms : 0.0)
+              << " scalar_finite=" << (scalar_world.diagnostics().finite ? "true" : "false")
+              << " simd_finite=" << (simd_world.diagnostics().finite ? "true" : "false")
+              << '\n';
+    return scalar_world.isValid() && simd_world.isValid() ? 0 : 1;
+}
+
+int runScalarThreadingComparison(std::size_t body_count, int steps, std::size_t worker_count) {
+    nbody::WorldState single_world = nbody::WorldState::deterministic(body_count,
+                                                                        nbody::Dimension::Two, 42);
+    nbody::WorldState multi_world = nbody::WorldState::deterministic(body_count,
+                                                                       nbody::Dimension::Two, 42);
+    nbody::SimulationParameters single_parameters;
+    single_parameters.dimension = nbody::Dimension::Two;
+    single_parameters.gravitational_constant = 0.1;
+    single_parameters.timestep = 0.001;
+    single_parameters.collision.model = nbody::CollisionModel::Transparent;
+    single_parameters.solver.threading = nbody::ThreadingMode::SingleThreaded;
+    nbody::SimulationParameters multi_parameters = single_parameters;
+    multi_parameters.solver.threading = nbody::ThreadingMode::MultiThreaded;
+    multi_parameters.solver.worker_count = worker_count;
+    nbody::ScalarFullPhysicsEngine single_solver;
+    nbody::ScalarFullPhysicsEngine multi_solver;
+
+    const auto single_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) single_solver.step(single_world, single_parameters);
+    const auto single_elapsed = std::chrono::steady_clock::now() - single_start;
+    const auto multi_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) multi_solver.step(multi_world, multi_parameters);
+    const auto multi_elapsed = std::chrono::steady_clock::now() - multi_start;
+    const double single_ms = std::chrono::duration<double, std::milli>(single_elapsed).count();
+    const double multi_ms = std::chrono::duration<double, std::milli>(multi_elapsed).count();
+    std::cout << "Scalar Full threading comparison dimension=2D"
+              << " steps=" << steps << " bodies=" << body_count
+              << " workers=" << worker_count
+              << " single_ms=" << single_ms << " multi_ms=" << multi_ms
+              << " speedup=" << (multi_ms > 0.0 ? single_ms / multi_ms : 0.0)
+              << " parity=" << (worldsNumericallyClose(single_world, multi_world) ? "true" : "false")
+              << '\n';
+    return single_world.isValid() && multi_world.isValid() ? 0 : 1;
+}
+
+int runScalarBarnesThreadingComparison(std::size_t body_count, int steps,
+                                       std::size_t worker_count) {
+    nbody::WorldState single_world = nbody::WorldState::deterministic(body_count,
+                                                                        nbody::Dimension::Two, 42);
+    nbody::WorldState multi_world = nbody::WorldState::deterministic(body_count,
+                                                                       nbody::Dimension::Two, 42);
+    nbody::SimulationParameters single_parameters;
+    single_parameters.dimension = nbody::Dimension::Two;
+    single_parameters.gravitational_constant = 0.1;
+    single_parameters.timestep = 0.001;
+    single_parameters.collision.model = nbody::CollisionModel::Transparent;
+    single_parameters.solver.force_model = nbody::ForceModel::BarnesHut;
+    single_parameters.solver.kind = nbody::SolverKind::Approximated;
+    single_parameters.solver.threading = nbody::ThreadingMode::SingleThreaded;
+    nbody::SimulationParameters multi_parameters = single_parameters;
+    multi_parameters.solver.threading = nbody::ThreadingMode::MultiThreaded;
+    multi_parameters.solver.worker_count = worker_count;
+    nbody::ScalarApproximatedPhysicsEngine single_solver;
+    nbody::ScalarApproximatedPhysicsEngine multi_solver;
+
+    const auto single_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) single_solver.step(single_world, single_parameters);
+    const auto single_elapsed = std::chrono::steady_clock::now() - single_start;
+    const auto multi_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) multi_solver.step(multi_world, multi_parameters);
+    const auto multi_elapsed = std::chrono::steady_clock::now() - multi_start;
+    const double single_ms = std::chrono::duration<double, std::milli>(single_elapsed).count();
+    const double multi_ms = std::chrono::duration<double, std::milli>(multi_elapsed).count();
+    std::cout << "Scalar Barnes-Hut threading comparison dimension=2D"
+              << " steps=" << steps << " bodies=" << body_count
+              << " workers=" << worker_count
+              << " single_ms=" << single_ms << " multi_ms=" << multi_ms
+              << " speedup=" << (multi_ms > 0.0 ? single_ms / multi_ms : 0.0)
+              << " parity=" << (worldsNumericallyClose(single_world, multi_world) ? "true" : "false")
+              << '\n';
+    return single_world.isValid() && multi_world.isValid() ? 0 : 1;
+}
+
+int runSimdThreadingComparison(std::size_t body_count, int steps,
+                               std::size_t worker_count, bool barnes_hut) {
+    nbody::WorldState single_world = nbody::WorldState::deterministic(body_count,
+                                                                        nbody::Dimension::Two, 42);
+    nbody::WorldState multi_world = nbody::WorldState::deterministic(body_count,
+                                                                       nbody::Dimension::Two, 42);
+    nbody::SimulationParameters single_parameters;
+    single_parameters.dimension = nbody::Dimension::Two;
+    single_parameters.gravitational_constant = 0.1;
+    single_parameters.timestep = 0.001;
+    single_parameters.collision.model = nbody::CollisionModel::Transparent;
+    single_parameters.solver.force_model = barnes_hut
+        ? nbody::ForceModel::BarnesHut : nbody::ForceModel::Full;
+    single_parameters.solver.kind = barnes_hut
+        ? nbody::SolverKind::Approximated : nbody::SolverKind::Full;
+    single_parameters.solver.threading = nbody::ThreadingMode::SingleThreaded;
+    nbody::SimulationParameters multi_parameters = single_parameters;
+    multi_parameters.solver.threading = nbody::ThreadingMode::MultiThreaded;
+    multi_parameters.solver.worker_count = worker_count;
+    nbody::SimdApproximatedPhysicsEngine simd_bh_single_solver;
+    nbody::SimdApproximatedPhysicsEngine simd_bh_multi_solver;
+    nbody::SimdFullPhysicsEngine simd_full_single_solver;
+    nbody::SimdFullPhysicsEngine simd_full_multi_solver;
+
+    const auto single_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) {
+        if (barnes_hut) simd_bh_single_solver.step(single_world, single_parameters);
+        else simd_full_single_solver.step(single_world, single_parameters);
+    }
+    const auto single_elapsed = std::chrono::steady_clock::now() - single_start;
+    const auto multi_start = std::chrono::steady_clock::now();
+    for (int step = 0; step < steps; ++step) {
+        if (barnes_hut) simd_bh_multi_solver.step(multi_world, multi_parameters);
+        else simd_full_multi_solver.step(multi_world, multi_parameters);
+    }
+    const auto multi_elapsed = std::chrono::steady_clock::now() - multi_start;
+    const double single_ms = std::chrono::duration<double, std::milli>(single_elapsed).count();
+    const double multi_ms = std::chrono::duration<double, std::milli>(multi_elapsed).count();
+    std::cout << (barnes_hut ? "SIMD Barnes-Hut" : "SIMD Full")
+              << " threading comparison dimension=2D"
+              << " steps=" << steps << " bodies=" << body_count
+              << " workers=" << worker_count
+              << " single_ms=" << single_ms << " multi_ms=" << multi_ms
+              << " speedup=" << (multi_ms > 0.0 ? single_ms / multi_ms : 0.0)
+              << " parity=" << (worldsNumericallyClose(single_world, multi_world) ? "true" : "false")
+              << '\n';
+    return single_world.isValid() && multi_world.isValid() ? 0 : 1;
 }
 
 }
@@ -115,6 +293,50 @@ int main(int argc, char** argv) {
         }
         nbody::SimdFullPhysicsEngine solver;
         return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::Full);
+    }
+
+    if (mode == "large-bh") {
+        const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 100000;
+        const int steps = argc > 3 ? std::stoi(argv[3]) : 1;
+        if (body_count == 0 || steps <= 0) {
+            std::cerr << "large-bh requires bodies > 0 and steps > 0\n";
+            return 2;
+        }
+        return runLargeBarnesHutComparison(body_count, steps);
+    }
+
+    if (mode == "scalar-mt-compare") {
+        const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 256;
+        const int steps = argc > 3 ? std::stoi(argv[3]) : 5;
+        const std::size_t worker_count = argc > 4 ? std::stoull(argv[4]) : 4;
+        if (body_count == 0 || steps <= 0 || worker_count == 0) {
+            std::cerr << "scalar-mt-compare requires bodies > 0, steps > 0, and workers > 0\n";
+            return 2;
+        }
+        return runScalarThreadingComparison(body_count, steps, worker_count);
+    }
+
+    if (mode == "scalar-bh-mt-compare") {
+        const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 256;
+        const int steps = argc > 3 ? std::stoi(argv[3]) : 5;
+        const std::size_t worker_count = argc > 4 ? std::stoull(argv[4]) : 4;
+        if (body_count == 0 || steps <= 0 || worker_count == 0) {
+            std::cerr << "scalar-bh-mt-compare requires bodies > 0, steps > 0, and workers > 0\n";
+            return 2;
+        }
+        return runScalarBarnesThreadingComparison(body_count, steps, worker_count);
+    }
+
+    if (mode == "simd-mt-compare" || mode == "simd-bh-mt-compare") {
+        const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 256;
+        const int steps = argc > 3 ? std::stoi(argv[3]) : 5;
+        const std::size_t worker_count = argc > 4 ? std::stoull(argv[4]) : 4;
+        if (body_count == 0 || steps <= 0 || worker_count == 0) {
+            std::cerr << "simd threading comparison requires bodies > 0, steps > 0, and workers > 0\n";
+            return 2;
+        }
+        return runSimdThreadingComparison(body_count, steps, worker_count,
+                                          mode == "simd-bh-mt-compare");
     }
 
     const bool solver_comparison = argc > 1 && std::string_view(argv[1]) == "compare";

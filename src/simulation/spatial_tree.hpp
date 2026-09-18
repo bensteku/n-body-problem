@@ -38,11 +38,10 @@ public:
             batch_size = 0;
         };
 
-        std::vector<std::size_t> candidates;
         for (std::size_t first = 0; first < bodies.size(); ++first) {
-            candidates.clear();
-            query(0, first, bodies, candidates);
-            for (const std::size_t second : candidates) {
+            query_candidates_.clear();
+            query(0, first, bodies, query_candidates_);
+            for (const std::size_t second : query_candidates_) {
                 if (second <= first) continue;
                 batch[batch_size++] = {first, second};
                 if (batch_size == batch_capacity) flush();
@@ -63,6 +62,10 @@ private:
     std::size_t maximum_depth_;
     double looseness_;
     std::vector<Node> nodes_;
+    // Reused by all query variants. SpatialTree instances are transient
+    // subsystem workspaces, so candidate scratch must not be allocated once
+    // per body or once per collision step.
+    mutable std::vector<std::size_t> query_candidates_;
 
     void insert(std::size_t node_index, std::size_t body_index,
                 const BodyStorage& bodies, std::size_t depth);

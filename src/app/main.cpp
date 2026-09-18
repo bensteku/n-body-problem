@@ -1,8 +1,7 @@
 #include "simulation/world_state.hpp"
-#include "simulation/physics_engine_factory.hpp"
+#include "simulation/physics_session.hpp"
 
 #include <iostream>
-#include <memory>
 #include <string_view>
 
 namespace {
@@ -23,7 +22,6 @@ int main(int argc, char** argv) {
     nbody::SimulationParameters parameters;
     parameters.dimension = dimension;
     parameters.timestep = 0.01;
-    std::unique_ptr<nbody::IPhysicsEngine> physics_engine;
 #ifdef NBODY_FORCE_MODEL_BARNES_HUT
     parameters.solver.force_model = nbody::ForceModel::BarnesHut;
     parameters.solver.kind = nbody::SolverKind::Approximated;
@@ -47,10 +45,11 @@ int main(int argc, char** argv) {
     parameters.solver.kind = nbody::SolverKind::Full;
     parameters.solver.backend = nbody::ComputeBackend::Scalar;
 #endif
-    physics_engine = nbody::createPhysicsEngine(parameters.solver);
+    nbody::PhysicsSession physics_session(parameters.solver);
     const bool gpu_fallback = parameters.solver.backend == nbody::ComputeBackend::GPU
-        && physics_engine->info(dimension).backend != nbody::ComputeBackend::GPU;
-    physics_engine->step(world, parameters);
+        && physics_session.engine().info(dimension).backend != nbody::ComputeBackend::GPU;
+    physics_session.step(world, parameters);
+    const nbody::FrameLease frame = physics_session.publishFrame(world);
     const nbody::WorldDiagnostics diagnostics = world.diagnostics();
 
     std::cout << "nbody greenfield scaffold\n"
@@ -59,11 +58,12 @@ int main(int argc, char** argv) {
               << "time=" << world.time() << "\n"
               << "solver=";
     if (gpu_fallback) {
-        std::cout << "GPU unavailable (fallback: " << physics_engine->info(dimension).name << ")\n";
+        std::cout << "GPU unavailable (fallback: " << physics_session.engine().info(dimension).name << ")\n";
     } else {
-        std::cout << physics_engine->info(dimension).name << "\n";
+        std::cout << physics_session.engine().info(dimension).name << "\n";
     }
     std::cout << "total_mass=" << diagnostics.total_mass << "\n"
+              << "published_bodies=" << frame->body_count << "\n"
               << "finite=" << (diagnostics.finite ? "true" : "false") << '\n';
     return world.isValid() ? 0 : 1;
 }

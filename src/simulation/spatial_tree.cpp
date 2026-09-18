@@ -133,11 +133,10 @@ void SpatialTree::potentialContactPairs(const BodyStorage& bodies,
                                         std::vector<std::pair<std::size_t, std::size_t>>& output) const {
     output.clear();
     if (nodes_.empty()) return;
-    std::vector<std::size_t> candidates;
     for (std::size_t first = 0; first < bodies.size(); ++first) {
-        candidates.clear();
-        query(0, first, bodies, candidates);
-        for (const std::size_t second : candidates) {
+        query_candidates_.clear();
+        query(0, first, bodies, query_candidates_);
+        for (const std::size_t second : query_candidates_) {
             if (second <= first) continue;
             const ConstBodyView first_body = bodies.view(first);
             const ConstBodyView second_body = bodies.view(second);
@@ -152,11 +151,10 @@ void SpatialTree::potentialBodyPairs(const BodyStorage& bodies,
                                      std::vector<std::pair<std::size_t, std::size_t>>& output) const {
     output.clear();
     if (nodes_.empty()) return;
-    std::vector<std::size_t> candidates;
     for (std::size_t first = 0; first < bodies.size(); ++first) {
-        candidates.clear();
-        query(0, first, bodies, candidates);
-        for (const std::size_t second : candidates) {
+        query_candidates_.clear();
+        query(0, first, bodies, query_candidates_);
+        for (const std::size_t second : query_candidates_) {
             if (second > first) output.emplace_back(first, second);
         }
     }

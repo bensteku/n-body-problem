@@ -6,6 +6,8 @@
 #include "simulation/solvers/simd_barnes_hut_kernel.hpp"
 
 #include <stdexcept>
+#include <algorithm>
+#include <thread>
 
 namespace nbody {
 
@@ -22,17 +24,45 @@ void SimdApproximatedPhysicsEngine::calculateAccelerations(const WorldState& wor
                                                 settings.maximum_depth);
     }
     tree_->rebuild(world.bodyStorage());
-    calculateAvx2BarnesHutAccelerations(world, parameters, *tree_, output);
+    configureThreading(parameters.solver);
+    output.assign(world.bodyCount(), Vec3{});
+    if (parameters.solver.threading == ThreadingMode::MultiThreaded) {
+        executor_.parallelFor(world.bodyCount(), [&](std::size_t worker,
+                                                     std::size_t begin, std::size_t end) {
+            calculateAvx2BarnesHutAccelerationsRange(world, parameters, *tree_, output,
+                                                      worker_traversal_stacks_[worker], begin, end);
+        });
+    } else {
+        calculateAvx2BarnesHutAccelerationsRange(world, parameters, *tree_, output,
+                                                  traversal_stack_, 0, world.bodyCount());
+    }
 }
 
-void SimdApproximatedPhysicsEngine::step(WorldState& world,
+void SimdApproximatedPhysicsEngine::configureThreading(
+    const SolverConfiguration& configuration) const {
+    const bool multithreaded = configuration.threading == ThreadingMode::MultiThreaded;
+    std::size_t worker_count = configuration.worker_count;
+    if (multithreaded && worker_count == 0) {
+        worker_count = std::max<std::size_t>(1, std::thread::hardware_concurrency());
+    }
+    if (!multithreaded) worker_count = 0;
+    if (worker_count == configured_worker_count_
+        && configuration.threading == configured_threading_) return;
+    executor_.setWorkerCount(worker_count);
+    worker_traversal_stacks_.resize(worker_count);
+    configured_worker_count_ = worker_count;
+    configured_threading_ = configuration.threading;
+}
+
+PhysicsStepResult SimdApproximatedPhysicsEngine::step(WorldState& world,
     const SimulationParameters& parameters) {
     if (!capabilities_.avx2) {
         ScalarApproximatedPhysicsEngine fallback;
-        fallback.step(world, parameters);
-        return;
+        return fallback.step(world, parameters);
     }
-    if (parameters.integrator != Integrator::VelocityVerlet) return;
+    if (parameters.integrator != Integrator::VelocityVerlet) {
+        return {PhysicsStepStatus::Skipped, world.time(), world.bodyCount()};
+    }
     if (parameters.dimension != world.dimension()) {
         throw std::invalid_argument("Simulation parameter dimension does not match WorldState dimension");
     }
@@ -57,15 +87,20 @@ void SimdApproximatedPhysicsEngine::step(WorldState& world,
     }
 
     SimdCollisionSystem::resolveContacts(world, parameters.collision,
-                                         parameters.gravitational_constant);
+                                         parameters.gravitational_constant,
+                                         simd_collision_workspace_,
+                                         scalar_collision_workspace_);
     BoundarySystem::resolve(world, parameters.boundary);
     SimdCollisionSystem::applyDeferredOutcomes(world, parameters.collision);
     world.advanceTime(timestep);
+    return {PhysicsStepStatus::Advanced, world.time(), world.bodyCount()};
 }
 
 PhysicsEngineInfo SimdApproximatedPhysicsEngine::info(Dimension dimension) const {
     return {ComputeBackend::SIMD, ForceModel::BarnesHut, dimension,
-            capabilities_.avx2 ? "SIMD Barnes-Hut (AVX2)" : "SIMD Barnes-Hut (scalar fallback)",
+            configured_threading_ == ThreadingMode::MultiThreaded
+                ? (capabilities_.avx2 ? "SIMD Barnes-Hut MT (AVX2)" : "SIMD Barnes-Hut MT (scalar fallback)")
+                : (capabilities_.avx2 ? "SIMD Barnes-Hut (AVX2)" : "SIMD Barnes-Hut (scalar fallback)"),
             SolverKind::Approximated};
 }
 

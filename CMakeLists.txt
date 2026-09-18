@@ -33,6 +33,9 @@ add_library(nbody_simulation
     src/simulation/simd_capabilities.cpp
     src/simulation/spatial_tree.cpp
     src/simulation/world_state.cpp
+    src/simulation/simulation_frame.cpp
+    src/simulation/physics_session.cpp
+    src/simulation/parallel_executor.cpp
     src/simulation/physics_engine_factory.cpp
     src/simulation/solvers/scalar_full_physics_engine.cpp
     src/simulation/solvers/scalar_approximated_physics_engine.cpp

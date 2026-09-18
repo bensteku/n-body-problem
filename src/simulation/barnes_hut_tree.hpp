@@ -36,6 +36,7 @@ public:
     };
     struct PackedNodeView {
         const SpatialBounds& bounds;
+        double extent;
         const std::array<std::size_t, 8>& children;
         std::uint8_t child_count;
         const std::size_t* packed_indices;
@@ -73,10 +74,29 @@ private:
         const double* packed_masses{};
     };
 
+    // Compact traversal-only metadata. The mutable tree nodes retain their
+    // per-node body vectors for construction and scalar traversal; SIMD reads
+    // this cache so cold vector members never enter the hot walk.
+    struct SimdTraversalNode {
+        SpatialBounds bounds;
+        double extent{};
+        std::array<std::size_t, 8> children{};
+        std::uint8_t child_count{};
+        std::size_t packed_count{};
+        const std::size_t* packed_indices{};
+        const double* packed_x{};
+        const double* packed_y{};
+        const double* packed_z{};
+        const double* packed_masses{};
+        double mass{};
+        Vec3 center_of_mass{};
+    };
+
     Dimension dimension_;
     std::size_t leaf_capacity_;
     std::size_t maximum_depth_;
     std::vector<Node> nodes_;
+    std::vector<SimdTraversalNode> simd_nodes_;
     std::vector<std::size_t> packed_indices_;
     std::vector<double> packed_x_;
     std::vector<double> packed_y_;
@@ -106,8 +126,8 @@ inline BarnesHutTree::NodeView BarnesHutTree::node(std::size_t index) const {
 }
 
 inline BarnesHutTree::PackedNodeView BarnesHutTree::packedNode(std::size_t index) const {
-    const Node& value = nodes_[index];
-    return {value.bounds, value.children, value.child_count, value.packed_indices,
+    const SimdTraversalNode& value = simd_nodes_[index];
+    return {value.bounds, value.extent, value.children, value.child_count, value.packed_indices,
             value.packed_x, value.packed_y, value.packed_z, value.packed_masses,
             value.packed_count, value.mass, value.center_of_mass};
 }

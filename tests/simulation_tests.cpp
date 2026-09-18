@@ -8,6 +8,8 @@
 #include "simulation/scalar_collision_system.hpp"
 #include "simulation/simd_collision_system.hpp"
 #include "simulation/physics_engine_factory.hpp"
+#include "simulation/simulation_frame.hpp"
+#include "simulation/physics_session.hpp"
 #include "test_support.hpp"
 
 #define assert(condition) REQUIRE(condition)
@@ -18,6 +20,200 @@
 
 int main() {
     using namespace nbody;
+
+    WorldState frame_world(Dimension::Three);
+    const BodyId frame_body_id = frame_world.addBody({{}, {1.0, 2.0, 3.0},
+        {0.5, 0.0, -0.5}, 4.0, 0.25, false});
+    FramePublisher frame_publisher(2);
+    FrameLease first_frame = frame_publisher.publish(frame_world);
+    assert(static_cast<bool>(first_frame));
+    assert(first_frame->dimension == Dimension::Three);
+    assert(first_frame->body_count == 1);
+    assert(first_frame->bodies.size() == 1);
+    assert(first_frame->bodies[0].id == frame_body_id);
+    assert(first_frame->bodies[0].position.x == 1.0);
+    frame_world.mutableBody(0).position.x = 9.0;
+    FrameLease second_frame = frame_publisher.publish(frame_world);
+    assert(second_frame->bodies[0].position.x == 9.0);
+    assert(first_frame->bodies[0].position.x == 1.0);
+    assert(first_frame->body_count_changed);
+    assert(second_frame->body_count_changed == false);
+
+    PhysicsSession session;
+    WorldState session_world = WorldState::deterministic(8, Dimension::Two, 19);
+    SimulationParameters session_parameters;
+    session_parameters.dimension = Dimension::Two;
+    assert(session.step(session_world, session_parameters).advanced());
+    SolverConfiguration session_simd;
+    session_simd.backend = ComputeBackend::SIMD;
+    const EngineSwitchResult switch_result = session.switchEngine(session_simd, session_world);
+    assert(switch_result.switched());
+    assert(session.configuration().backend == ComputeBackend::SIMD);
+    assert(session_world.isValid());
+    const FrameLease session_frame = session.publishFrame(session_world);
+    assert(session_frame->body_count == session_world.bodyCount());
+    SolverConfiguration invalid_switch;
+    invalid_switch.force_model = ForceModel::BarnesHut;
+    assert(!session.switchEngine(invalid_switch, session_world).switched());
+    assert(session.configuration().backend == ComputeBackend::SIMD);
+    SimulationParameters wrong_dimension = session_parameters;
+    wrong_dimension.dimension = Dimension::Three;
+    const double session_time = session_world.time();
+    const PhysicsStepResult rejected_step = session.step(session_world, wrong_dimension);
+    assert(rejected_step.rejected());
+    assert(session_world.time() == session_time);
+
+    WorldState scalar_single_world = WorldState::deterministic(48, Dimension::Two, 23);
+    WorldState scalar_mt_world = WorldState::deterministic(48, Dimension::Two, 23);
+    SimulationParameters scalar_thread_parameters;
+    scalar_thread_parameters.dimension = Dimension::Two;
+    scalar_thread_parameters.gravitational_constant = 0.1;
+    scalar_thread_parameters.timestep = 1e-4;
+    scalar_thread_parameters.collision.model = CollisionModel::Transparent;
+    ScalarFullPhysicsEngine scalar_single_engine;
+    ScalarFullPhysicsEngine scalar_mt_engine;
+    scalar_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    scalar_thread_parameters.solver.worker_count = 2;
+    for (int step = 0; step < 3; ++step) {
+        assert(scalar_single_engine.step(scalar_single_world, scalar_thread_parameters).advanced());
+        assert(scalar_mt_engine.step(scalar_mt_world, scalar_thread_parameters).advanced());
+    }
+    assert(nbody_test::worldsHaveNumericalParity(scalar_single_world, scalar_mt_world,
+                                                  {1e-10, 1e-10}));
+    scalar_thread_parameters.solver.threading = ThreadingMode::SingleThreaded;
+    assert(scalar_mt_engine.step(scalar_mt_world, scalar_thread_parameters).advanced());
+    scalar_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    assert(scalar_mt_engine.step(scalar_mt_world, scalar_thread_parameters).advanced());
+    assert(scalar_mt_world.isValid());
+
+    WorldState bh_single_world = WorldState::deterministic(96, Dimension::Two, 29);
+    WorldState bh_mt_world = WorldState::deterministic(96, Dimension::Two, 29);
+    SimulationParameters bh_thread_parameters;
+    bh_thread_parameters.dimension = Dimension::Two;
+    bh_thread_parameters.gravitational_constant = 0.1;
+    bh_thread_parameters.timestep = 1e-4;
+    bh_thread_parameters.collision.model = CollisionModel::Transparent;
+    bh_thread_parameters.solver.force_model = ForceModel::BarnesHut;
+    bh_thread_parameters.solver.kind = SolverKind::Approximated;
+    bh_thread_parameters.solver.threading = ThreadingMode::SingleThreaded;
+    ScalarApproximatedPhysicsEngine bh_single_engine;
+    ScalarApproximatedPhysicsEngine bh_mt_engine;
+    for (int step = 0; step < 3; ++step) {
+        assert(bh_single_engine.step(bh_single_world, bh_thread_parameters).advanced());
+    }
+    bh_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    bh_thread_parameters.solver.worker_count = 2;
+    for (int step = 0; step < 3; ++step) {
+        assert(bh_mt_engine.step(bh_mt_world, bh_thread_parameters).advanced());
+    }
+    assert(nbody_test::worldsHaveNumericalParity(bh_single_world, bh_mt_world,
+                                                  {1e-10, 1e-10}));
+    bh_thread_parameters.solver.threading = ThreadingMode::SingleThreaded;
+    assert(bh_mt_engine.step(bh_mt_world, bh_thread_parameters).advanced());
+    bh_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    assert(bh_mt_engine.step(bh_mt_world, bh_thread_parameters).advanced());
+    assert(bh_mt_world.isValid());
+
+    WorldState simd_full_single_world = WorldState::deterministic(48, Dimension::Two, 31);
+    WorldState simd_full_mt_world = WorldState::deterministic(48, Dimension::Two, 31);
+    SimulationParameters simd_full_thread_parameters;
+    simd_full_thread_parameters.dimension = Dimension::Two;
+    simd_full_thread_parameters.gravitational_constant = 0.1;
+    simd_full_thread_parameters.timestep = 1e-4;
+    simd_full_thread_parameters.collision.model = CollisionModel::Transparent;
+    simd_full_thread_parameters.solver.threading = ThreadingMode::SingleThreaded;
+    SimdFullPhysicsEngine simd_full_single_engine;
+    SimdFullPhysicsEngine simd_full_mt_engine;
+    for (int step = 0; step < 3; ++step) {
+        assert(simd_full_single_engine.step(simd_full_single_world,
+                                            simd_full_thread_parameters).advanced());
+    }
+    simd_full_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    simd_full_thread_parameters.solver.worker_count = 2;
+    for (int step = 0; step < 3; ++step) {
+        assert(simd_full_mt_engine.step(simd_full_mt_world,
+                                        simd_full_thread_parameters).advanced());
+    }
+    assert(nbody_test::worldsHaveNumericalParity(simd_full_single_world, simd_full_mt_world,
+                                                  {1e-10, 1e-10}));
+    simd_full_thread_parameters.solver.threading = ThreadingMode::SingleThreaded;
+    assert(simd_full_mt_engine.step(simd_full_mt_world, simd_full_thread_parameters).advanced());
+    simd_full_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    assert(simd_full_mt_engine.step(simd_full_mt_world, simd_full_thread_parameters).advanced());
+
+    WorldState simd_bh_single_world = WorldState::deterministic(96, Dimension::Two, 37);
+    WorldState simd_bh_mt_world = WorldState::deterministic(96, Dimension::Two, 37);
+    SimulationParameters simd_bh_thread_parameters;
+    simd_bh_thread_parameters.dimension = Dimension::Two;
+    simd_bh_thread_parameters.gravitational_constant = 0.1;
+    simd_bh_thread_parameters.timestep = 1e-4;
+    simd_bh_thread_parameters.collision.model = CollisionModel::Transparent;
+    simd_bh_thread_parameters.solver.force_model = ForceModel::BarnesHut;
+    simd_bh_thread_parameters.solver.kind = SolverKind::Approximated;
+    simd_bh_thread_parameters.solver.threading = ThreadingMode::SingleThreaded;
+    SimdApproximatedPhysicsEngine simd_bh_single_engine;
+    SimdApproximatedPhysicsEngine simd_bh_mt_engine;
+    for (int step = 0; step < 3; ++step) {
+        assert(simd_bh_single_engine.step(simd_bh_single_world,
+                                          simd_bh_thread_parameters).advanced());
+    }
+    simd_bh_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    simd_bh_thread_parameters.solver.worker_count = 2;
+    for (int step = 0; step < 3; ++step) {
+        assert(simd_bh_mt_engine.step(simd_bh_mt_world,
+                                      simd_bh_thread_parameters).advanced());
+    }
+    assert(nbody_test::worldsHaveNumericalParity(simd_bh_single_world, simd_bh_mt_world,
+                                                  {1e-10, 1e-10}));
+    simd_bh_thread_parameters.solver.threading = ThreadingMode::SingleThreaded;
+    assert(simd_bh_mt_engine.step(simd_bh_mt_world, simd_bh_thread_parameters).advanced());
+    simd_bh_thread_parameters.solver.threading = ThreadingMode::MultiThreaded;
+    assert(simd_bh_mt_engine.step(simd_bh_mt_world, simd_bh_thread_parameters).advanced());
+
+    const auto makeParityScenario = [](Dimension dimension, std::size_t body_count,
+                                       unsigned long long seed) {
+        WorldState world = WorldState::deterministic(body_count, dimension, seed);
+        for (std::size_t index = 0; index < body_count; ++index) {
+            MutableBodyView body = world.mutableBody(index);
+            const double column = static_cast<double>(index % 16);
+            const double row = static_cast<double>(index / 16);
+            body.position.x = column * 0.8 - 6.0;
+            body.position.y = row * 0.8 - 6.0;
+            body.position.z = dimension == Dimension::Three
+                ? static_cast<double>(index % 5) * 0.6 - 1.2 : 0.0;
+            body.velocity.x = 0.01 * (static_cast<double>(index % 7) - 3.0);
+            body.velocity.y = -0.01 * (static_cast<double>(index % 5) - 2.0);
+            body.velocity.z = dimension == Dimension::Three
+                ? 0.01 * (static_cast<double>(index % 3) - 1.0) : 0.0;
+            body.static_flag = index % 17 == 0 ? 1 : 0;
+        }
+        return world;
+    };
+
+    const auto compareEngineParity = [&](IPhysicsEngine& reference_engine,
+                                          IPhysicsEngine& candidate_engine,
+                                          Dimension dimension, SolverKind kind,
+                                          std::size_t body_count, int steps,
+                                          unsigned long long seed,
+                                          nbody_test::NumericalParityTolerance tolerance) {
+        WorldState reference = makeParityScenario(dimension, body_count, seed);
+        WorldState candidate = makeParityScenario(dimension, body_count, seed);
+        SimulationParameters parameters;
+        parameters.dimension = dimension;
+        parameters.gravitational_constant = 0.1;
+        parameters.timestep = 1e-4;
+        parameters.softening_length = 1e-3;
+        parameters.collision.model = CollisionModel::Transparent;
+        parameters.solver.kind = kind;
+        parameters.solver.force_model = kind == SolverKind::Approximated
+            ? ForceModel::BarnesHut : ForceModel::Full;
+        parameters.solver.barnes_hut.opening_angle = 0.5;
+        for (int step = 0; step < steps; ++step) {
+            assert(reference_engine.step(reference, parameters).advanced());
+            assert(candidate_engine.step(candidate, parameters).advanced());
+            assert(nbody_test::worldsHaveNumericalParity(reference, candidate, tolerance));
+        }
+    };
 
     SolverConfiguration scalar_full_configuration;
     const std::unique_ptr<IPhysicsEngine> scalar_full_engine =
@@ -43,6 +239,22 @@ int main() {
     gpu_configuration.backend = ComputeBackend::GPU;
     const std::unique_ptr<IPhysicsEngine> gpu_engine = createPhysicsEngine(gpu_configuration);
     assert(gpu_engine->info(Dimension::Two).backend == ComputeBackend::Scalar);
+
+    const SolverConfigurationValidation valid_configuration =
+        validateSolverConfiguration(scalar_full_configuration);
+    assert(valid_configuration.valid);
+    SolverConfiguration invalid_configuration;
+    invalid_configuration.force_model = ForceModel::BarnesHut;
+    assert(!validateSolverConfiguration(invalid_configuration).valid);
+
+    WorldState engine_contract_world = WorldState::deterministic(4, Dimension::Two, 7);
+    SimulationParameters engine_contract_parameters;
+    engine_contract_parameters.dimension = Dimension::Two;
+    const PhysicsStepResult engine_step =
+        scalar_full_engine->step(engine_contract_world, engine_contract_parameters);
+    assert(engine_step.advanced());
+    assert(engine_step.body_count == engine_contract_world.bodyCount());
+    assert(engine_step.simulation_time == engine_contract_world.time());
 
     WorldState first = WorldState::deterministic(8, Dimension::Two, 1234);
     WorldState second = WorldState::deterministic(8, Dimension::Two, 1234);
@@ -189,6 +401,26 @@ int main() {
         assert((scalar_barnes_reference.body(index).position - simd_barnes_world.body(index).position).length(Dimension::Three) < 1e-9);
         assert((scalar_barnes_reference.body(index).velocity - simd_barnes_world.body(index).velocity).length(Dimension::Three) < 1e-9);
     }
+
+    ScalarFullPhysicsEngine parity_scalar_full_2d;
+    SimdFullPhysicsEngine parity_simd_full_2d;
+    compareEngineParity(parity_scalar_full_2d, parity_simd_full_2d, Dimension::Two,
+                        SolverKind::Full, 64, 8, 401, {1e-9, 1e-9});
+
+    ScalarFullPhysicsEngine parity_scalar_full_3d;
+    SimdFullPhysicsEngine parity_simd_full_3d;
+    compareEngineParity(parity_scalar_full_3d, parity_simd_full_3d, Dimension::Three,
+                        SolverKind::Full, 64, 8, 403, {1e-9, 1e-9});
+
+    ScalarApproximatedPhysicsEngine parity_scalar_barnes_2d;
+    SimdApproximatedPhysicsEngine parity_simd_barnes_2d;
+    compareEngineParity(parity_scalar_barnes_2d, parity_simd_barnes_2d, Dimension::Two,
+                        SolverKind::Approximated, 256, 6, 407, {1e-9, 1e-9});
+
+    ScalarApproximatedPhysicsEngine parity_scalar_barnes_3d;
+    SimdApproximatedPhysicsEngine parity_simd_barnes_3d;
+    compareEngineParity(parity_scalar_barnes_3d, parity_simd_barnes_3d, Dimension::Three,
+                        SolverKind::Approximated, 128, 6, 409, {1e-9, 1e-9});
 
     WorldState three_dimensional = WorldState::deterministic(2, Dimension::Three, 9);
     assert(three_dimensional.isValid());

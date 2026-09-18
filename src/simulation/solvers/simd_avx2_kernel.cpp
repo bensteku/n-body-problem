@@ -5,12 +5,12 @@
 
 namespace nbody {
 
-void calculateAvx2Accelerations(const WorldState& world, const SimulationParameters& parameters,
-                                std::vector<Vec3>& output) {
+void calculateAvx2AccelerationsRange(const WorldState& world,
+                                     const SimulationParameters& parameters,
+                                     std::vector<Vec3>& output,
+                                     std::size_t begin, std::size_t end) {
     const BodyStorage& storage = world.bodyStorage();
-    storage.synchronizePositionComponents();
     const std::size_t count = world.bodyCount();
-    output.assign(count, Vec3{});
     const auto& x = storage.positionX();
     const auto& y = storage.positionY();
     const auto& z = storage.positionZ();
@@ -20,7 +20,7 @@ void calculateAvx2Accelerations(const WorldState& world, const SimulationParamet
     const __m256d softening = _mm256_set1_pd(softening_squared);
     const __m256d gravitational_constant = _mm256_set1_pd(parameters.gravitational_constant);
 
-    for (std::size_t target = 0; target < count; ++target) {
+    for (std::size_t target = begin; target < end; ++target) {
         if (world.body(target).is_static()) continue;
         const __m256d target_x = _mm256_set1_pd(x[target]);
         const __m256d target_y = _mm256_set1_pd(y[target]);
@@ -77,6 +77,13 @@ void calculateAvx2Accelerations(const WorldState& world, const SimulationParamet
         }
         output[target] = {scalar_x, scalar_y, three_dimensional ? scalar_z : 0.0};
     }
+}
+
+void calculateAvx2Accelerations(const WorldState& world, const SimulationParameters& parameters,
+                                std::vector<Vec3>& output) {
+    world.bodyStorage().synchronizePositionComponents();
+    output.assign(world.bodyCount(), Vec3{});
+    calculateAvx2AccelerationsRange(world, parameters, output, 0, world.bodyCount());
 }
 
 }
