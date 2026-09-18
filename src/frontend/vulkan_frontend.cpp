@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <limits>
@@ -393,6 +394,9 @@ private:
     bool grid_{};
     bool add_body_{};
     bool static_body_{};
+    float camera_x_{};
+    float camera_y_{};
+    float view_scale_{20.0f};
 
     static constexpr std::size_t max_history_frames_ = 600;
 
@@ -461,6 +465,8 @@ private:
         if (ImGui::Button(grid_ ? "Hide grid" : "Show grid")) grid_ = !grid_;
         ImGui::SameLine();
         if (ImGui::Button("Add body")) add_body_ = true;
+        ImGui::SameLine();
+        if (ImGui::Button("Debug solar system")) createDebugSolarSystem();
         ImGui::EndMainMenuBar();
         if (steps_this_frame == 256 && accumulator_ >= parameters_.timestep) {
             ImGui::Begin("Playback status", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
@@ -578,27 +584,124 @@ private:
         }
     }
 
+    void createDebugSolarSystem() {
+        struct PlanetDefinition {
+            const char* name;
+            double orbit_au;
+            double mass_ratio;
+        };
+        constexpr std::array<PlanetDefinition, 8> planets{{
+            {"Mercury", 0.387, 1.660e-7},
+            {"Venus", 0.723, 2.447e-6},
+            {"Earth", 1.000, 3.003e-6},
+            {"Mars", 1.524, 3.227e-7},
+            {"Jupiter", 5.203, 9.545e-4},
+            {"Saturn", 9.537, 2.857e-4},
+            {"Uranus", 19.191, 4.366e-5},
+            {"Neptune", 30.070, 5.151e-5}
+        }};
+        constexpr double neptune_orbit = 400.0;
+        constexpr double scale = neptune_orbit / 30.070;
+        constexpr double gravitational_constant = 1.0;
+        constexpr double sun_mass = 1.0;
+        constexpr double pi = 3.14159265358979323846;
+        std::mt19937 generator(20260918);
+        std::uniform_real_distribution<double> phase(0.0, 2.0 * pi);
+
+        world_ = WorldState(Dimension::Two);
+        BodyState sun;
+        sun.mass = sun_mass;
+        sun.radius = 5.0;
+        sun.is_static = true;
+        sun.kind = BodyKind::Star;
+        world_.addBody(sun);
+
+        for (const PlanetDefinition& planet : planets) {
+            const double orbit = planet.orbit_au * scale;
+            const double angle = phase(generator);
+            const double speed = std::sqrt(gravitational_constant * sun_mass / orbit);
+            BodyState body;
+            body.position = {orbit * std::cos(angle), orbit * std::sin(angle), 0.0};
+            body.velocity = {-speed * std::sin(angle), speed * std::cos(angle), 0.0};
+            body.mass = planet.mass_ratio;
+            body.radius = 2.0;
+            body.kind = BodyKind::Ordinary;
+            world_.addBody(body);
+        }
+        history_.clear();
+        accumulator_ = 0.0;
+        running_ = false;
+        reversing_ = false;
+        camera_x_ = 0.0f;
+        camera_y_ = 0.0f;
+        view_scale_ = 1.5f;
+    }
+
     void drawWorld(GLFWwindow* window) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const ImVec2 origin{viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
-                            viewport->WorkPos.y + viewport->WorkSize.y * 0.5f + 20.0f};
-        constexpr float scale = 20.0f;
+        const ImVec2 origin{viewport->WorkPos.x + viewport->WorkSize.x * 0.5f
+                                - camera_x_ * view_scale_,
+                            viewport->WorkPos.y + viewport->WorkSize.y * 0.5f + 20.0f
+                                + camera_y_ * view_scale_};
+        const ImVec2 work_min = viewport->WorkPos;
+        const ImVec2 work_max{viewport->WorkPos.x + viewport->WorkSize.x,
+                              viewport->WorkPos.y + viewport->WorkSize.y};
+        ImGuiIO& io = ImGui::GetIO();
+        if (ImGui::IsMouseHoveringRect(work_min, work_max) && !ImGui::IsAnyItemActive()) {
+            if (io.MouseWheel != 0.0f) {
+                const float old_scale = view_scale_;
+                view_scale_ = std::clamp(view_scale_ * std::pow(1.15f, io.MouseWheel), 0.25f, 200.0f);
+                // Keep the world point under the cursor stable while zooming.
+                const ImVec2 mouse = io.MousePos;
+                const float world_x = camera_x_ + (mouse.x - (work_min.x + viewport->WorkSize.x * 0.5f)) / old_scale;
+                const float world_y = camera_y_ - (mouse.y - (work_min.y + viewport->WorkSize.y * 0.5f + 20.0f)) / old_scale;
+                camera_x_ = world_x - (mouse.x - (work_min.x + viewport->WorkSize.x * 0.5f)) / view_scale_;
+                camera_y_ = world_y + (mouse.y - (work_min.y + viewport->WorkSize.y * 0.5f + 20.0f)) / view_scale_;
+            }
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                camera_x_ -= io.MouseDelta.x / view_scale_;
+                camera_y_ += io.MouseDelta.y / view_scale_;
+            }
+        }
+        ImGui::SetNextWindowPos({work_min.x + 12.0f, work_max.y - 42.0f}, ImGuiCond_Always);
+        ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
+            | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::Text("Zoom %.2f  |  Scroll zooms, drag pans", view_scale_);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset view")) {
+            camera_x_ = 0.0f;
+            camera_y_ = 0.0f;
+            view_scale_ = 20.0f;
+        }
+        ImGui::End();
         ImDrawList* draw = ImGui::GetForegroundDrawList();
         if (grid_) {
-            for (int line = -20; line <= 20; ++line) {
-                const float offset = static_cast<float>(line) * scale;
-                draw->AddLine({origin.x - 20.0f * scale, origin.y + offset},
-                              {origin.x + 20.0f * scale, origin.y + offset}, 0x30384A55);
-                draw->AddLine({origin.x + offset, origin.y - 20.0f * scale},
-                              {origin.x + offset, origin.y + 20.0f * scale}, 0x30384A55);
+            const float world_width = viewport->WorkSize.x / view_scale_;
+            const float world_height = viewport->WorkSize.y / view_scale_;
+            const float grid_step = view_scale_ < 2.0f ? 50.0f : (view_scale_ < 8.0f ? 10.0f : 1.0f);
+            const int min_x = static_cast<int>(std::floor(camera_x_ - world_width * 0.5f / grid_step)) - 1;
+            const int max_x = static_cast<int>(std::ceil(camera_x_ + world_width * 0.5f / grid_step)) + 1;
+            const int min_y = static_cast<int>(std::floor(camera_y_ - world_height * 0.5f / grid_step)) - 1;
+            const int max_y = static_cast<int>(std::ceil(camera_y_ + world_height * 0.5f / grid_step)) + 1;
+            for (int line = min_x; line <= max_x; ++line) {
+                const float world = static_cast<float>(line) * grid_step;
+                const float x = origin.x + world * view_scale_;
+                draw->AddLine({x, work_min.y}, {x, work_max.y}, 0x30384A55);
+            }
+            for (int line = min_y; line <= max_y; ++line) {
+                const float world = static_cast<float>(line) * grid_step;
+                const float y = origin.y - world * view_scale_;
+                draw->AddLine({work_min.x, y}, {work_max.x, y}, 0x30384A55);
             }
         }
         if (publication_ && publication_->published()) {
             for (const RenderBody& body : publication_->cpu_snapshot->bodies) {
-                const ImVec2 position{origin.x + static_cast<float>(body.position.x) * scale,
-                                      origin.y - static_cast<float>(body.position.y) * scale};
-                const float radius = std::clamp(static_cast<float>(body.radius * scale), 2.0f, 24.0f);
-                draw->AddCircleFilled(position, radius, body.is_static ? 0xFFB080FF : 0x80D8FFFF);
+                const ImVec2 position{origin.x + static_cast<float>(body.position.x) * view_scale_,
+                                      origin.y - static_cast<float>(body.position.y) * view_scale_};
+                const float radius = std::clamp(static_cast<float>(body.radius * view_scale_), 2.0f, 24.0f);
+                const ImU32 color = body.kind == BodyKind::Star ? 0xFF60D0FFFF
+                    : (body.is_static ? 0xFFB080FF : 0x80D8FFFF);
+                draw->AddCircleFilled(position, radius, color);
                 draw->AddCircle(position, radius, 0xFFFFFFFF, 16, 1.0f);
             }
         }
