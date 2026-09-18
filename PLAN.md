@@ -27,6 +27,14 @@ The long-term application should support:
 
 The existing repository is not the foundation for this system. It is a source of historical ideas, equations, experiments, and benchmark intent. The rebuild should be greenfield, with only deliberately revalidated concepts carried over.
 
+### General design preamble: unified physics engines
+
+Each backend/solver-kind combination is an integrated physics engine, not merely a force solver. An engine owns the complete numerical step: force calculation, integration, collision detection and response, boundary handling, deferred physical outcomes, diagnostics, and any future physics modules added to that engine. Application code selects an engine through a common session-facing interface and does not need to know how that engine orders or fuses its internal phases.
+
+The engine concept is an execution boundary, not a demand that every engine share the same algorithms or data structures. Scalar, SIMD, and Vulkan GPU engines should be designed from first principles around their respective execution models, memory systems, and synchronization costs. A SIMD engine may fuse phases or use layouts that have no useful Scalar equivalent; a GPU engine should use device-oriented flat buffers and kernel staging rather than mirror CPU object graphs. Existing implementations are semantic references and sources of validated behavior, not structural templates to be mechanically ported. Internally specialized engines must nevertheless be externally interchangeable: callers receive the same lifecycle and stepping API, configuration semantics, diagnostics, events, state views, validation behavior, and failure/transition reporting regardless of the selected engine.
+
+The non-negotiable cross-engine contract is numerical and behavioral parity, especially against Scalar Full as the reference, within explicit tolerances. Parity includes positions, velocities, conserved quantities, body counts and identities, collision/fragmentation/absorption outcomes, and documented determinism guarantees. Tests must distinguish intended floating-point tolerance from genuine semantic divergence. Performance-oriented backend specialization is encouraged so long as it preserves that contract.
+
 ## 2. Firm project constraints
 
 ### 2.1 Platform and toolchain
@@ -156,7 +164,7 @@ Application
     ├── Reference-point presentation model
     ├── Collision and boundary systems
     ├── Diagnostics
-    └── Runtime-selected solver
+    └── Runtime-selected integrated physics engine
         ├── Scalar full
         ├── SIMD full
         ├── Vulkan GPU full

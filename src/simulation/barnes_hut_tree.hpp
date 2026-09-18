@@ -34,7 +34,21 @@ public:
         double mass;
         const Vec3& center_of_mass;
     };
+    struct PackedNodeView {
+        const SpatialBounds& bounds;
+        const std::array<std::size_t, 8>& children;
+        std::uint8_t child_count;
+        const std::size_t* packed_indices;
+        const double* packed_x;
+        const double* packed_y;
+        const double* packed_z;
+        const double* packed_masses;
+        std::size_t packed_count;
+        double mass;
+        const Vec3& center_of_mass;
+    };
     NodeView node(std::size_t index) const;
+    PackedNodeView packedNode(std::size_t index) const;
     Vec3 accelerationOn(std::size_t target, const BodyStorage& bodies,
                         double gravitational_constant, double softening_length,
                         double opening_angle) const;
@@ -51,6 +65,12 @@ private:
         std::size_t packed_offset{};
         double mass{};
         Vec3 center_of_mass{};
+        std::size_t packed_count{};
+        const std::size_t* packed_indices{};
+        const double* packed_x{};
+        const double* packed_y{};
+        const double* packed_z{};
+        const double* packed_masses{};
     };
 
     Dimension dimension_;
@@ -83,6 +103,13 @@ inline BarnesHutTree::NodeView BarnesHutTree::node(std::size_t index) const {
             std::span<const double>(packed_z_.data() + value.packed_offset, value.bodies.size()),
             std::span<const double>(packed_masses_.data() + value.packed_offset, value.bodies.size()),
             value.mass, value.center_of_mass};
+}
+
+inline BarnesHutTree::PackedNodeView BarnesHutTree::packedNode(std::size_t index) const {
+    const Node& value = nodes_[index];
+    return {value.bounds, value.children, value.child_count, value.packed_indices,
+            value.packed_x, value.packed_y, value.packed_z, value.packed_masses,
+            value.packed_count, value.mass, value.center_of_mass};
 }
 
 }

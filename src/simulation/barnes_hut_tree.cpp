@@ -47,6 +47,15 @@ void BarnesHutTree::rebuild(const BodyStorage& bodies) {
     packed_z_.reserve(bodies.size());
     packed_masses_.reserve(bodies.size());
     packBodies(0, bodies);
+    for (Node& node : nodes_) {
+        node.packed_count = node.bodies.size();
+        if (node.packed_count == 0) continue;
+        node.packed_indices = packed_indices_.data() + node.packed_offset;
+        node.packed_x = packed_x_.data() + node.packed_offset;
+        node.packed_y = packed_y_.data() + node.packed_offset;
+        node.packed_z = packed_z_.data() + node.packed_offset;
+        node.packed_masses = packed_masses_.data() + node.packed_offset;
+    }
 }
 
 void BarnesHutTree::insert(std::size_t node_index, std::size_t body_index,

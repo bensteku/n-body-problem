@@ -26,13 +26,14 @@ Vec3 accelerationFromNode(const BarnesHutTree& tree, std::size_t node_index, std
                           double softening_squared, double opening_angle,
                           std::vector<std::size_t>& traversal_stack) {
     const Dimension dimension = world.dimension();
+    const bool three_dimensional = dimension == Dimension::Three;
     traversal_stack.clear();
     traversal_stack.push_back(node_index);
     Vec3 acceleration{};
     while (!traversal_stack.empty()) {
         const std::size_t current_node = traversal_stack.back();
         traversal_stack.pop_back();
-        const BarnesHutTree::NodeView node = tree.node(current_node);
+        const BarnesHutTree::PackedNodeView node = tree.packedNode(current_node);
         if (node.mass <= 0.0) continue;
         const double distance_squared = (node.center_of_mass - target_position).lengthSquared(dimension)
             + softening_squared;
@@ -46,7 +47,7 @@ Vec3 accelerationFromNode(const BarnesHutTree& tree, std::size_t node_index, std
         }
 
         std::size_t source = 0;
-        if (node.packed_x.size() >= 4) {
+        if (node.packed_count >= 4) {
             __m256d acceleration_x = _mm256_setzero_pd();
             __m256d acceleration_y = _mm256_setzero_pd();
             __m256d acceleration_z = _mm256_setzero_pd();
@@ -56,20 +57,23 @@ Vec3 accelerationFromNode(const BarnesHutTree& tree, std::size_t node_index, std
             const __m256d softening = _mm256_set1_pd(softening_squared);
             const __m256d minimum_distance = _mm256_set1_pd(1e-30);
             const __m256d gravity = _mm256_set1_pd(gravitational_constant);
-            for (; source + 3 < node.packed_x.size(); source += 4) {
-                const __m256d dx = _mm256_sub_pd(_mm256_loadu_pd(node.packed_x.data() + source), target_x);
-                const __m256d dy = _mm256_sub_pd(_mm256_loadu_pd(node.packed_y.data() + source), target_y);
-                const __m256d dz = _mm256_sub_pd(_mm256_loadu_pd(node.packed_z.data() + source), target_z);
+            for (; source + 3 < node.packed_count; source += 4) {
+                const __m256d dx = _mm256_sub_pd(_mm256_loadu_pd(node.packed_x + source), target_x);
+                const __m256d dy = _mm256_sub_pd(_mm256_loadu_pd(node.packed_y + source), target_y);
+                __m256d dz;
                 __m256d distance_squared = _mm256_add_pd(_mm256_mul_pd(dx, dx), _mm256_mul_pd(dy, dy));
-                if (dimension == Dimension::Three) distance_squared = _mm256_add_pd(distance_squared, _mm256_mul_pd(dz, dz));
+                if (three_dimensional) {
+                    dz = _mm256_sub_pd(_mm256_loadu_pd(node.packed_z + source), target_z);
+                    distance_squared = _mm256_add_pd(distance_squared, _mm256_mul_pd(dz, dz));
+                }
                 distance_squared = _mm256_max_pd(_mm256_add_pd(distance_squared, softening), minimum_distance);
                 const __m256d distance = _mm256_sqrt_pd(distance_squared);
                 const __m256d scale = _mm256_mul_pd(gravity,
-                    _mm256_div_pd(_mm256_loadu_pd(node.packed_masses.data() + source),
+                    _mm256_div_pd(_mm256_loadu_pd(node.packed_masses + source),
                                   _mm256_mul_pd(distance_squared, distance)));
                 acceleration_x = _mm256_add_pd(acceleration_x, _mm256_mul_pd(dx, scale));
                 acceleration_y = _mm256_add_pd(acceleration_y, _mm256_mul_pd(dy, scale));
-                if (dimension == Dimension::Three) acceleration_z = _mm256_add_pd(acceleration_z, _mm256_mul_pd(dz, scale));
+                if (three_dimensional) acceleration_z = _mm256_add_pd(acceleration_z, _mm256_mul_pd(dz, scale));
             }
             alignas(32) double lanes_x[4];
             alignas(32) double lanes_y[4];
@@ -81,7 +85,7 @@ Vec3 accelerationFromNode(const BarnesHutTree& tree, std::size_t node_index, std
             for (double lane : lanes_y) acceleration.y += lane;
             for (double lane : lanes_z) acceleration.z += lane;
         }
-        for (; source < node.packed_x.size(); ++source) {
+        for (; source < node.packed_count; ++source) {
             const std::size_t body_index = node.packed_indices[source];
             if (body_index == target) continue;
             const Vec3 displacement{node.packed_x[source] - target_position.x,
