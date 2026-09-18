@@ -12,7 +12,9 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -307,6 +309,20 @@ private:
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGui::StyleColorsDark();
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding = 8.0f;
+        style.ChildRounding = 6.0f;
+        style.FrameRounding = 5.0f;
+        style.PopupRounding = 7.0f;
+        style.GrabRounding = 5.0f;
+        style.WindowBorderSize = 1.0f;
+        style.FrameBorderSize = 1.0f;
+        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.035f, 0.045f, 0.080f, 0.96f);
+        style.Colors[ImGuiCol_TitleBg] = ImVec4(0.025f, 0.035f, 0.065f, 1.0f);
+        style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.080f, 0.150f, 0.240f, 1.0f);
+        style.Colors[ImGuiCol_Button] = ImVec4(0.100f, 0.240f, 0.360f, 1.0f);
+        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.140f, 0.380f, 0.520f, 1.0f);
+        style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.100f, 0.300f, 0.440f, 1.0f);
         ImGui_ImplGlfw_InitForVulkan(window, true);
         ImGui_ImplVulkan_InitInfo info{};
         info.ApiVersion = VK_API_VERSION_1_0;
@@ -345,17 +361,40 @@ private:
     WorldState world_{Dimension::Two};
     SimulationParameters parameters_;
     std::optional<FramePublication> publication_;
+    std::deque<WorldState> history_;
     std::chrono::steady_clock::time_point last_frame_{std::chrono::steady_clock::now()};
     double accumulator_{};
-    float timescale_{1.0f};
+    double time_scale_value_{1.0};
+    double simulation_timestep_{0.001};
+    int time_scale_unit_{};
+    int generator_{};
+    int generated_count_{8};
+    int spiral_arms_{2};
+    int random_seed_{42};
     float body_x_{};
     float body_y_{};
+    float body_velocity_x_{};
+    float body_velocity_y_{};
     float body_mass_{1.0f};
     float body_radius_{0.25f};
+    float minimum_mass_{0.5f};
+    float maximum_mass_{2.0f};
+    float minimum_radius_{0.1f};
+    float maximum_radius_{0.5f};
+    float distribution_size_{5.0f};
+    float gaussian_sigma_{2.0f};
+    float inner_radius_{2.0f};
+    float outer_radius_{8.0f};
+    float spiral_turns_{2.0f};
+    float tangential_velocity_{};
     bool title_screen_{true};
     bool running_{};
+    bool reversing_{};
     bool grid_{};
     bool add_body_{};
+    bool static_body_{};
+
+    static constexpr std::size_t max_history_frames_ = 600;
 
     void drawTitle() {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -376,44 +415,114 @@ private:
 
     void drawSimulation(GLFWwindow* window, double elapsed) {
         parameters_.dimension = Dimension::Two;
-        parameters_.timestep = 0.01;
+        parameters_.timestep = std::clamp(simulation_timestep_, 1.0e-5, 1.0);
+        parameters_.softening_length = 0.05;
         parameters_.collision.model = CollisionModel::Transparent;
-        accumulator_ += elapsed * timescale_;
-        while (running_ && accumulator_ >= parameters_.timestep) {
+        const double requested_rate = timeScaleSecondsPerRealSecond();
+        accumulator_ += elapsed * requested_rate;
+        std::size_t steps_this_frame = 0;
+        while (running_ && accumulator_ >= parameters_.timestep && steps_this_frame < 256) {
+            history_.push_back(world_);
+            if (history_.size() > max_history_frames_) history_.pop_front();
             session_.step(world_, parameters_);
             accumulator_ -= parameters_.timestep;
+            ++steps_this_frame;
+        }
+        if (reversing_ && !history_.empty()) {
+            world_ = std::move(history_.back());
+            history_.pop_back();
+            accumulator_ = 0.0;
         }
         publication_ = session_.publishFrame(world_);
         ImGui::BeginMainMenuBar();
-        if (ImGui::Button(running_ ? "Pause" : "Start")) running_ = !running_;
+        if (ImGui::Button(running_ ? "Pause" : "Start")) {
+            running_ = !running_;
+            reversing_ = false;
+        }
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::SliderFloat("Timescale", &timescale_, 0.0f, 10.0f, "%.2fx");
+        if (ImGui::Button(reversing_ ? "Stop reverse" : "Reverse")) {
+            reversing_ = !reversing_;
+            running_ = false;
+        }
         ImGui::SameLine();
-        ImGui::Text("time %.3f | bodies %zu", world_.time(), world_.bodyCount());
+        ImGui::SetNextItemWidth(110.0f);
+        ImGui::InputDouble("##time-scale", &time_scale_value_, 0.1, 1.0, "%.3f");
+        ImGui::SameLine();
+        const char* units[] = {"seconds / real second", "days / real second",
+                               "months / real second", "years / real second"};
+        ImGui::SetNextItemWidth(170.0f);
+        ImGui::Combo("##time-scale-unit", &time_scale_unit_, units, 4);
+        ImGui::SameLine();
+        ImGui::Text("sim time %.3f | bodies %zu", world_.time(), world_.bodyCount());
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::InputDouble("dt", &simulation_timestep_, 0.0001, 0.001, "%.5f");
         ImGui::SameLine();
         if (ImGui::Button(grid_ ? "Hide grid" : "Show grid")) grid_ = !grid_;
         ImGui::SameLine();
         if (ImGui::Button("Add body")) add_body_ = true;
         ImGui::EndMainMenuBar();
+        if (steps_this_frame == 256 && accumulator_ >= parameters_.timestep) {
+            ImGui::Begin("Playback status", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::Text("Playback is rate-limited: reduce timescale or timestep.");
+            ImGui::End();
+        }
         if (add_body_) drawAddBody();
         drawWorld(window);
+    }
+
+    double timeScaleSecondsPerRealSecond() const {
+        const double value = std::max(0.0, time_scale_value_);
+        switch (time_scale_unit_) {
+        case 1: return value * 86400.0;
+        case 2: return value * 30.0 * 86400.0;
+        case 3: return value * 365.25 * 86400.0;
+        default: return value;
+        }
     }
 
     void drawAddBody() {
         ImGui::OpenPopup("Add body");
         if (!ImGui::BeginPopupModal("Add body", &add_body_, ImGuiWindowFlags_AlwaysAutoResize)) return;
-        ImGui::TextUnformatted("Text-based single-body placement");
-        ImGui::InputFloat("X", &body_x_);
-        ImGui::InputFloat("Y", &body_y_);
-        ImGui::InputFloat("Mass", &body_mass_);
-        ImGui::InputFloat("Radius", &body_radius_);
+        const char* generators[] = {"Single body", "Uniform", "Gaussian", "Spiral", "Circle"};
+        ImGui::Combo("Pattern", &generator_, generators, 5);
+        if (generator_ == 0) {
+            ImGui::InputFloat("X", &body_x_);
+            ImGui::InputFloat("Y", &body_y_);
+            ImGui::InputFloat("Velocity X", &body_velocity_x_);
+            ImGui::InputFloat("Velocity Y", &body_velocity_y_);
+            ImGui::InputFloat("Mass", &body_mass_);
+            ImGui::InputFloat("Radius", &body_radius_);
+        } else {
+            ImGui::InputInt("Count", &generated_count_);
+            ImGui::InputFloat("Center X", &body_x_);
+            ImGui::InputFloat("Center Y", &body_y_);
+            ImGui::InputFloat("Min mass", &minimum_mass_);
+            ImGui::InputFloat("Max mass", &maximum_mass_);
+            ImGui::InputFloat("Min radius", &minimum_radius_);
+            ImGui::InputFloat("Max radius", &maximum_radius_);
+            ImGui::InputFloat("Velocity X", &body_velocity_x_);
+            ImGui::InputFloat("Velocity Y", &body_velocity_y_);
+            if (generator_ == 1) ImGui::InputFloat("Uniform half-size", &distribution_size_);
+            if (generator_ == 2) ImGui::InputFloat("Gaussian sigma", &gaussian_sigma_);
+            if (generator_ == 3) {
+                ImGui::InputInt("Arms", &spiral_arms_);
+                ImGui::InputFloat("Inner radius", &inner_radius_);
+                ImGui::InputFloat("Outer radius", &outer_radius_);
+                ImGui::InputFloat("Turns", &spiral_turns_);
+                ImGui::InputFloat("Tangential velocity", &tangential_velocity_);
+            }
+            if (generator_ == 4) {
+                ImGui::InputFloat("Inner radius", &inner_radius_);
+                ImGui::InputFloat("Outer radius", &outer_radius_);
+                ImGui::InputFloat("Tangential velocity", &tangential_velocity_);
+            }
+            ImGui::InputInt("Random seed", &random_seed_);
+        }
+        ImGui::Checkbox("Static body/bodies", &static_body_);
         if (ImGui::Button("Create")) {
-            BodyState body;
-            body.position = {body_x_, body_y_, 0.0};
-            body.mass = std::max(0.001f, body_mass_);
-            body.radius = std::max(0.001f, body_radius_);
-            world_.addBody(body);
+            generateBodies();
+            history_.clear();
             add_body_ = false;
             ImGui::CloseCurrentPopup();
         }
@@ -423,6 +532,50 @@ private:
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
+    }
+
+    void generateBodies() {
+        const int count = generator_ == 0 ? 1 : std::max(1, generated_count_);
+        std::mt19937 generator(static_cast<std::mt19937::result_type>(random_seed_));
+        std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+        std::uniform_real_distribution<float> mass(std::min(minimum_mass_, maximum_mass_),
+                                                   std::max(minimum_mass_, maximum_mass_));
+        std::uniform_real_distribution<float> radius(std::min(minimum_radius_, maximum_radius_),
+                                                     std::max(minimum_radius_, maximum_radius_));
+        constexpr float pi = 3.14159265358979323846f;
+        for (int index = 0; index < count; ++index) {
+            float x = body_x_;
+            float y = body_y_;
+            float angle = 0.0f;
+            if (generator_ == 1) {
+                x += (unit(generator) * 2.0f - 1.0f) * distribution_size_;
+                y += (unit(generator) * 2.0f - 1.0f) * distribution_size_;
+            } else if (generator_ == 2) {
+                std::normal_distribution<float> gaussian(0.0f, std::max(0.001f, gaussian_sigma_));
+                x += gaussian(generator);
+                y += gaussian(generator);
+            } else if (generator_ == 3 || generator_ == 4) {
+                const float fraction = count == 1 ? 0.0f : static_cast<float>(index) / (count - 1);
+                angle = generator_ == 3
+                    ? 2.0f * pi * static_cast<float>(index % std::max(1, spiral_arms_))
+                        / std::max(1, spiral_arms_) + 2.0f * pi * spiral_turns_ * fraction
+                    : 2.0f * pi * fraction;
+                const float radial = inner_radius_ + (outer_radius_ - inner_radius_) * fraction;
+                x += radial * std::cos(angle);
+                y += radial * std::sin(angle);
+            }
+            BodyState body;
+            body.position = {x, y, 0.0};
+            body.velocity = {body_velocity_x_, body_velocity_y_, 0.0};
+            if (generator_ == 3 || generator_ == 4) {
+                body.velocity.x += -std::sin(angle) * tangential_velocity_;
+                body.velocity.y += std::cos(angle) * tangential_velocity_;
+            }
+            body.mass = generator_ == 0 ? std::max(0.001f, body_mass_) : std::max(0.001f, mass(generator));
+            body.radius = generator_ == 0 ? std::max(0.001f, body_radius_) : std::max(0.001f, radius(generator));
+            body.is_static = static_body_;
+            world_.addBody(body);
+        }
     }
 
     void drawWorld(GLFWwindow* window) {
