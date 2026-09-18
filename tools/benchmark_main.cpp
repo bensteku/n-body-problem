@@ -1,9 +1,10 @@
 #include "simulation/world_state.hpp"
-#include "simulation/solvers/scalar_full_solver.hpp"
-#include "simulation/solvers/scalar_barnes_hut_solver.hpp"
-#include "simulation/solvers/simd_full_solver.hpp"
-#include "simulation/solvers/simd_barnes_hut_solver.hpp"
-#include "simulation/collision_system.hpp"
+#include "simulation/solvers/scalar_full_physics_engine.hpp"
+#include "simulation/solvers/scalar_approximated_physics_engine.hpp"
+#include "simulation/solvers/simd_full_physics_engine.hpp"
+#include "simulation/solvers/simd_approximated_physics_engine.hpp"
+#include "simulation/scalar_collision_system.hpp"
+#include "simulation/simd_collision_system.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -70,10 +71,10 @@ int main(int argc, char** argv) {
 
         const double initial_mass = world.diagnostics().total_mass;
         const auto resolve_start = std::chrono::steady_clock::now();
-        nbody::CollisionSystem::resolveContacts(world, settings, 0.0);
+        nbody::ScalarCollisionSystem::resolveContacts(world, settings, 0.0);
         const auto resolve_elapsed = std::chrono::steady_clock::now() - resolve_start;
         const auto apply_start = std::chrono::steady_clock::now();
-        nbody::CollisionSystem::applyDeferredOutcomes(world, settings);
+        nbody::ScalarCollisionSystem::applyDeferredOutcomes(world, settings);
         const auto apply_elapsed = std::chrono::steady_clock::now() - apply_start;
         const double resolve_ms = std::chrono::duration<double, std::milli>(resolve_elapsed).count();
         const double apply_ms = std::chrono::duration<double, std::milli>(apply_elapsed).count();
@@ -101,18 +102,18 @@ int main(int argc, char** argv) {
         const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 2000;
         const int steps = argc > 3 ? std::stoi(argv[3]) : 20;
         if (mode == "scalar-bh") {
-            nbody::ScalarBarnesHutSolver solver;
+            nbody::ScalarApproximatedPhysicsEngine solver;
             return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::BarnesHut);
         }
         if (mode == "simd-bh") {
-            nbody::SimdBarnesHutSolver solver;
+            nbody::SimdApproximatedPhysicsEngine solver;
             return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::BarnesHut);
         }
         if (mode == "scalar-full") {
-            nbody::ScalarFullSolver solver;
+            nbody::ScalarFullPhysicsEngine solver;
             return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::Full);
         }
-        nbody::SimdFullSolver solver;
+        nbody::SimdFullPhysicsEngine solver;
         return runIsolatedSolver(mode, body_count, steps, solver, nbody::ForceModel::Full);
     }
 
@@ -130,8 +131,8 @@ int main(int argc, char** argv) {
         parameters.collision.model = nbody::CollisionModel::Transparent;
         nbody::SimulationParameters barnes_parameters = parameters;
         barnes_parameters.solver.force_model = nbody::ForceModel::BarnesHut;
-        nbody::ScalarFullSolver full_solver;
-        nbody::ScalarBarnesHutSolver barnes_solver;
+        nbody::ScalarFullPhysicsEngine full_solver;
+        nbody::ScalarApproximatedPhysicsEngine barnes_solver;
 
         const auto full_start = std::chrono::steady_clock::now();
         for (int step = 0; step < steps; ++step) full_solver.step(full_world, parameters);
@@ -165,8 +166,8 @@ int main(int argc, char** argv) {
         parameters.collision.model = nbody::CollisionModel::HardBody;
         nbody::SimulationParameters barnes_parameters = parameters;
         barnes_parameters.solver.force_model = nbody::ForceModel::BarnesHut;
-        nbody::ScalarFullSolver full_solver;
-        nbody::ScalarBarnesHutSolver barnes_solver;
+        nbody::ScalarFullPhysicsEngine full_solver;
+        nbody::ScalarApproximatedPhysicsEngine barnes_solver;
 
         const auto full_start = std::chrono::steady_clock::now();
         for (int step = 0; step < steps; ++step) full_solver.step(full_world, parameters);
@@ -199,8 +200,8 @@ int main(int argc, char** argv) {
         parameters.gravitational_constant = 0.1;
         parameters.timestep = 0.001;
         parameters.collision.model = nbody::CollisionModel::Transparent;
-        nbody::ScalarFullSolver scalar_solver;
-        nbody::SimdFullSolver simd_solver;
+        nbody::ScalarFullPhysicsEngine scalar_solver;
+        nbody::SimdFullPhysicsEngine simd_solver;
         const auto scalar_start = std::chrono::steady_clock::now();
         for (int step = 0; step < steps; ++step) scalar_solver.step(scalar_world, parameters);
         const auto scalar_elapsed = std::chrono::steady_clock::now() - scalar_start;
@@ -229,8 +230,8 @@ int main(int argc, char** argv) {
         parameters.timestep = 0.001;
         parameters.collision.model = nbody::CollisionModel::Transparent;
         parameters.solver.force_model = nbody::ForceModel::BarnesHut;
-        nbody::ScalarBarnesHutSolver scalar_solver;
-        nbody::SimdBarnesHutSolver simd_solver;
+        nbody::ScalarApproximatedPhysicsEngine scalar_solver;
+        nbody::SimdApproximatedPhysicsEngine simd_solver;
         const auto scalar_start = std::chrono::steady_clock::now();
         for (int step = 0; step < steps; ++step) scalar_solver.step(scalar_world, parameters);
         const auto scalar_elapsed = std::chrono::steady_clock::now() - scalar_start;
@@ -257,7 +258,7 @@ int main(int argc, char** argv) {
         parameters.gravitational_constant = 0.1;
         parameters.timestep = 0.001;
         parameters.collision.model = nbody::CollisionModel::Transparent;
-        nbody::ScalarBarnesHutSolver solver;
+        nbody::ScalarApproximatedPhysicsEngine solver;
         const auto start = std::chrono::steady_clock::now();
         for (int step = 0; step < steps_per_phase; ++step) solver.step(world, parameters);
         parameters.collision.model = nbody::CollisionModel::HardBody;
@@ -281,7 +282,7 @@ int main(int argc, char** argv) {
         collision.model = nbody::CollisionModel::HardBody;
         const auto start = std::chrono::steady_clock::now();
         for (int step = 0; step < steps; ++step) {
-            nbody::CollisionSystem::resolveContacts(world, collision, 0.0);
+            nbody::ScalarCollisionSystem::resolveContacts(world, collision, 0.0);
         }
         const auto elapsed = std::chrono::steady_clock::now() - start;
         std::cout << "collision broad-phase dimension=2D"
@@ -291,13 +292,46 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    const bool simd_collision_comparison = argc > 1 && std::string_view(argv[1]) == "collision-compare";
+    if (simd_collision_comparison) {
+        constexpr std::size_t body_count = 5000;
+        constexpr int steps = 25;
+        nbody::WorldState scalar_world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
+        nbody::WorldState simd_world = nbody::WorldState::deterministic(body_count, nbody::Dimension::Two, 42);
+        nbody::CollisionSettings collision;
+        collision.model = nbody::CollisionModel::HardBody;
+        scalar_world.setActiveCollisionModel(nbody::CollisionModel::HardBody);
+        simd_world.setActiveCollisionModel(nbody::CollisionModel::HardBody);
+
+        const auto scalar_start = std::chrono::steady_clock::now();
+        for (int step = 0; step < steps; ++step) {
+            nbody::ScalarCollisionSystem::resolveContacts(scalar_world, collision, 0.0);
+        }
+        const auto scalar_elapsed = std::chrono::steady_clock::now() - scalar_start;
+
+        const auto simd_start = std::chrono::steady_clock::now();
+        for (int step = 0; step < steps; ++step) {
+            nbody::SimdCollisionSystem::resolveContacts(simd_world, collision, 0.0);
+        }
+        const auto simd_elapsed = std::chrono::steady_clock::now() - simd_start;
+        const double scalar_ms = std::chrono::duration<double, std::milli>(scalar_elapsed).count();
+        const double simd_ms = std::chrono::duration<double, std::milli>(simd_elapsed).count();
+        std::cout << "collision SIMD comparison dimension=2D"
+                  << " steps=" << steps << " bodies=" << body_count
+                  << " scalar_ms=" << scalar_ms << " simd_ms=" << simd_ms
+                  << " speedup=" << (simd_ms > 0.0 ? scalar_ms / simd_ms : 0.0)
+                  << " scalar_contacts=" << scalar_world.collisionEvents().size()
+                  << " simd_contacts=" << simd_world.collisionEvents().size() << '\n';
+        return scalar_world.isValid() && simd_world.isValid() ? 0 : 1;
+    }
+
     const bool three_dimensional = argc > 1 && (std::string_view(argv[1]) == "3" || std::string_view(argv[1]) == "3D");
     const nbody::Dimension dimension = three_dimensional ? nbody::Dimension::Three : nbody::Dimension::Two;
     nbody::WorldState world = nbody::WorldState::deterministic(1000, dimension, 42);
     nbody::SimulationParameters parameters;
     parameters.dimension = dimension;
     parameters.timestep = 0.01;
-    nbody::ScalarFullSolver solver;
+    nbody::ScalarFullPhysicsEngine solver;
     const auto start = std::chrono::steady_clock::now();
     for (int step = 0; step < 100; ++step) solver.step(world, parameters);
     const auto elapsed = std::chrono::steady_clock::now() - start;

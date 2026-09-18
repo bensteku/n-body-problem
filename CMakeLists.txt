@@ -28,24 +28,28 @@ add_library(nbody_simulation
     src/simulation/barnes_hut_tree.cpp
     src/simulation/body_storage.cpp
     src/simulation/collision_system.cpp
+    src/simulation/simd_collision_system.cpp
     src/simulation/material_properties.cpp
     src/simulation/simd_capabilities.cpp
     src/simulation/spatial_tree.cpp
     src/simulation/world_state.cpp
-    src/simulation/solvers/scalar_full_solver.cpp
-    src/simulation/solvers/scalar_barnes_hut_solver.cpp
-    src/simulation/solvers/simd_full_solver.cpp
+    src/simulation/physics_engine_factory.cpp
+    src/simulation/solvers/scalar_full_physics_engine.cpp
+    src/simulation/solvers/scalar_approximated_physics_engine.cpp
+    src/simulation/solvers/simd_full_physics_engine.cpp
+    src/simulation/solvers/simd_approximated_physics_engine.cpp
     src/simulation/solvers/simd_avx2_kernel.cpp
-    src/simulation/solvers/simd_barnes_hut_solver.cpp
     src/simulation/solvers/simd_barnes_hut_kernel.cpp
 )
 target_include_directories(nbody_simulation PUBLIC ${CMAKE_SOURCE_DIR}/src)
 if (MSVC)
     set_source_files_properties(src/simulation/solvers/simd_avx2_kernel.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     set_source_files_properties(src/simulation/solvers/simd_barnes_hut_kernel.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
+    set_source_files_properties(src/simulation/simd_collision_system.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/simulation/solvers/simd_avx2_kernel.cpp PROPERTIES COMPILE_OPTIONS "-mavx2")
     set_source_files_properties(src/simulation/solvers/simd_barnes_hut_kernel.cpp PROPERTIES COMPILE_OPTIONS "-mavx2")
+    set_source_files_properties(src/simulation/simd_collision_system.cpp PROPERTIES COMPILE_OPTIONS "-mavx2")
 endif()
 
 add_executable(nbody_app src/app/main.cpp)

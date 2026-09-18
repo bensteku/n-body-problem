@@ -5,6 +5,8 @@
 #include "spatial_bounds.hpp"
 
 #include <cstddef>
+#include <array>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,31 @@ public:
                                std::vector<std::pair<std::size_t, std::size_t>>& output) const;
     void potentialBodyPairs(const BodyStorage& bodies,
                             std::vector<std::pair<std::size_t, std::size_t>>& output) const;
+
+    template <typename Callback>
+    void forEachPotentialBodyPairBatch(const BodyStorage& bodies, Callback&& callback) const {
+        if (nodes_.empty()) return;
+        constexpr std::size_t batch_capacity = 64;
+        std::array<std::pair<std::size_t, std::size_t>, batch_capacity> batch{};
+        std::size_t batch_size = 0;
+        const auto flush = [&]() {
+            callback(std::span<const std::pair<std::size_t, std::size_t>>(
+                batch.data(), batch_size));
+            batch_size = 0;
+        };
+
+        std::vector<std::size_t> candidates;
+        for (std::size_t first = 0; first < bodies.size(); ++first) {
+            candidates.clear();
+            query(0, first, bodies, candidates);
+            for (const std::size_t second : candidates) {
+                if (second <= first) continue;
+                batch[batch_size++] = {first, second};
+                if (batch_size == batch_capacity) flush();
+            }
+        }
+        if (batch_size != 0) flush();
+    }
 
 private:
     struct Node {

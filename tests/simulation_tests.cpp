@@ -1,11 +1,13 @@
 #include "simulation/world_state.hpp"
-#include "simulation/solvers/scalar_full_solver.hpp"
-#include "simulation/solvers/scalar_barnes_hut_solver.hpp"
-#include "simulation/solvers/simd_full_solver.hpp"
-#include "simulation/solvers/simd_barnes_hut_solver.hpp"
+#include "simulation/solvers/scalar_full_physics_engine.hpp"
+#include "simulation/solvers/scalar_approximated_physics_engine.hpp"
+#include "simulation/solvers/simd_full_physics_engine.hpp"
+#include "simulation/solvers/simd_approximated_physics_engine.hpp"
 #include "simulation/barnes_hut_tree.hpp"
 #include "simulation/spatial_tree.hpp"
-#include "simulation/collision_system.hpp"
+#include "simulation/scalar_collision_system.hpp"
+#include "simulation/simd_collision_system.hpp"
+#include "simulation/physics_engine_factory.hpp"
 #include "test_support.hpp"
 
 #define assert(condition) REQUIRE(condition)
@@ -16,6 +18,31 @@
 
 int main() {
     using namespace nbody;
+
+    SolverConfiguration scalar_full_configuration;
+    const std::unique_ptr<IPhysicsEngine> scalar_full_engine =
+        createPhysicsEngine(scalar_full_configuration);
+    assert(scalar_full_engine->info(Dimension::Two).backend == ComputeBackend::Scalar);
+    assert(scalar_full_engine->info(Dimension::Two).kind == SolverKind::Full);
+
+    SolverConfiguration scalar_approximate_configuration;
+    scalar_approximate_configuration.kind = SolverKind::Approximated;
+    scalar_approximate_configuration.force_model = ForceModel::BarnesHut;
+    const std::unique_ptr<IPhysicsEngine> scalar_approximate_engine =
+        createPhysicsEngine(scalar_approximate_configuration);
+    assert(scalar_approximate_engine->info(Dimension::Two).backend == ComputeBackend::Scalar);
+    assert(scalar_approximate_engine->info(Dimension::Two).kind == SolverKind::Approximated);
+
+    SolverConfiguration simd_full_configuration;
+    simd_full_configuration.backend = ComputeBackend::SIMD;
+    const std::unique_ptr<IPhysicsEngine> simd_full_engine =
+        createPhysicsEngine(simd_full_configuration);
+    assert(simd_full_engine->info(Dimension::Two).backend == ComputeBackend::SIMD);
+
+    SolverConfiguration gpu_configuration;
+    gpu_configuration.backend = ComputeBackend::GPU;
+    const std::unique_ptr<IPhysicsEngine> gpu_engine = createPhysicsEngine(gpu_configuration);
+    assert(gpu_engine->info(Dimension::Two).backend == ComputeBackend::Scalar);
 
     WorldState first = WorldState::deterministic(8, Dimension::Two, 1234);
     WorldState second = WorldState::deterministic(8, Dimension::Two, 1234);
@@ -126,8 +153,8 @@ int main() {
     SimulationParameters barnes_parameters = full_parameters;
     barnes_parameters.solver.force_model = ForceModel::BarnesHut;
     barnes_parameters.solver.barnes_hut.opening_angle = 0.5;
-    ScalarFullSolver full_solver;
-    ScalarBarnesHutSolver barnes_solver;
+    ScalarFullPhysicsEngine full_solver;
+    ScalarApproximatedPhysicsEngine barnes_solver;
     full_solver.step(full_world, full_parameters);
     barnes_solver.step(barnes_world, barnes_parameters);
     for (std::size_t index = 0; index < full_world.bodyCount(); ++index) {
@@ -141,8 +168,8 @@ int main() {
     simd_parameters.gravitational_constant = 0.1;
     simd_parameters.timestep = 1e-4;
     simd_parameters.collision.model = CollisionModel::Transparent;
-    ScalarFullSolver scalar_reference_solver;
-    SimdFullSolver simd_solver;
+    ScalarFullPhysicsEngine scalar_reference_solver;
+    SimdFullPhysicsEngine simd_solver;
     scalar_reference_solver.step(scalar_simd_reference, simd_parameters);
     simd_solver.step(simd_world, simd_parameters);
     for (std::size_t index = 0; index < scalar_simd_reference.bodyCount(); ++index) {
@@ -154,8 +181,8 @@ int main() {
     WorldState simd_barnes_world = WorldState::deterministic(120, Dimension::Three, 151);
     SimulationParameters barnes_simd_parameters = simd_parameters;
     barnes_simd_parameters.solver.barnes_hut.opening_angle = 0.5;
-    ScalarBarnesHutSolver scalar_barnes_solver;
-    SimdBarnesHutSolver simd_barnes_solver;
+    ScalarApproximatedPhysicsEngine scalar_barnes_solver;
+    SimdApproximatedPhysicsEngine simd_barnes_solver;
     scalar_barnes_solver.step(scalar_barnes_reference, barnes_simd_parameters);
     simd_barnes_solver.step(simd_barnes_world, barnes_simd_parameters);
     for (std::size_t index = 0; index < scalar_barnes_reference.bodyCount(); ++index) {
@@ -175,7 +202,7 @@ int main() {
     WorldState two_body(Dimension::Two);
     two_body.addBody({{}, {-1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, 1.0, 0.1, false});
     two_body.addBody({{}, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, 1.0, 0.1, false});
-    ScalarFullSolver solver;
+    ScalarFullPhysicsEngine solver;
     solver.step(two_body, parameters);
     assert(two_body.time() == parameters.timestep);
     assert(two_body.bodies()[0].velocity.x > 0.0);
@@ -260,7 +287,7 @@ int main() {
     hard_body_settings.model = CollisionModel::HardBody;
     hard_body_settings.restitution = 0.0;
     hard_body_settings.maximum_consistency_passes = 50;
-    CollisionSystem::resolveContacts(collision_mode_switch, hard_body_settings, 0.0);
+    ScalarCollisionSystem::resolveContacts(collision_mode_switch, hard_body_settings, 0.0);
     assert(collision_mode_switch.activeCollisionModel() == CollisionModel::HardBody);
     assert(!collision_mode_switch.collisionTransitionDiagnostics().failed);
 
@@ -268,14 +295,14 @@ int main() {
         >= collision_mode_switch.body(0).radius + collision_mode_switch.body(1).radius - 1e-12);
     CollisionSettings transparent_settings;
     transparent_settings.model = CollisionModel::Transparent;
-    CollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
+    ScalarCollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
     assert(collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
     assert(!collision_mode_switch.collisionTransitionDiagnostics().failed);
 
     bool transparent_fragmentation_rejected = false;
     transparent_settings.classifier.fragmentation_enabled = true;
     try {
-        CollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
+        ScalarCollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
     } catch (const std::invalid_argument&) {
         transparent_fragmentation_rejected = true;
     }
@@ -285,7 +312,7 @@ int main() {
     transparent_settings.classifier.fragmentation_enabled = false;
     transparent_settings.classifier.absorption_enabled = true;
     try {
-        CollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
+        ScalarCollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
     } catch (const std::invalid_argument&) {
         transparent_absorption_rejected = true;
     }
@@ -293,15 +320,15 @@ int main() {
 
     CollisionSettings hard_body_absorption = hard_body_settings;
     hard_body_absorption.classifier.absorption_enabled = true;
-    CollisionSystem::resolveContacts(collision_mode_switch, hard_body_absorption, 0.0);
+    ScalarCollisionSystem::resolveContacts(collision_mode_switch, hard_body_absorption, 0.0);
     assert(collision_mode_switch.activeCollisionModel() == CollisionModel::HardBody);
 
     WorldState gas_absorber(Dimension::Two);
     gas_absorber.addBody({{}, {-0.25, 0.0, 0.0}, {1.0, 0.0, 0.0}, 10.0, 2.0, false});
     gas_absorber.addBody({{}, {0.25, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 0.5, false});
     gas_absorber.mutableBody(0).kind = BodyKind::Gas;
-    CollisionSystem::resolveContacts(gas_absorber, hard_body_absorption, 0.0);
-    CollisionSystem::applyDeferredOutcomes(gas_absorber, hard_body_absorption);
+    ScalarCollisionSystem::resolveContacts(gas_absorber, hard_body_absorption, 0.0);
+    ScalarCollisionSystem::applyDeferredOutcomes(gas_absorber, hard_body_absorption);
     assert(gas_absorber.bodyCount() == 1);
     assert(gas_absorber.body(0).id.value == 1);
     assert(gas_absorber.body(0).kind == BodyKind::Gas);
@@ -314,8 +341,8 @@ int main() {
     static_absorber.addBody({{}, {}, {}, 1.0, 0.5, true});
     static_absorber.mutableBody(0).kind = BodyKind::Gas;
     static_absorber.setActiveCollisionModel(CollisionModel::HardBody);
-    CollisionSystem::resolveContacts(static_absorber, hard_body_absorption, 0.0);
-    CollisionSystem::applyDeferredOutcomes(static_absorber, hard_body_absorption);
+    ScalarCollisionSystem::resolveContacts(static_absorber, hard_body_absorption, 0.0);
+    ScalarCollisionSystem::applyDeferredOutcomes(static_absorber, hard_body_absorption);
     assert(static_absorber.bodyCount() == 1);
     assert(static_absorber.body(0).kind == BodyKind::Gas);
     assert(static_absorber.body(0).is_static());
@@ -325,8 +352,8 @@ int main() {
     dominant_solid.addBody({{}, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 1.0, false});
     dominant_solid.addBody({{}, {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 3.0, 3.0, false});
     dominant_solid.mutableBody(0).kind = BodyKind::Gas;
-    CollisionSystem::resolveContacts(dominant_solid, hard_body_absorption, 0.0);
-    CollisionSystem::applyDeferredOutcomes(dominant_solid, hard_body_absorption);
+    ScalarCollisionSystem::resolveContacts(dominant_solid, hard_body_absorption, 0.0);
+    ScalarCollisionSystem::applyDeferredOutcomes(dominant_solid, hard_body_absorption);
     assert(dominant_solid.bodyCount() == 1);
     assert(dominant_solid.body(0).id.value == 2);
     assert(dominant_solid.body(0).kind == BodyKind::Ordinary);
@@ -338,8 +365,8 @@ int main() {
     black_hole.addBody({{}, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 1.0, false});
     black_hole.addBody({{}, {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 100.0, 100.0, false});
     black_hole.mutableBody(0).kind = BodyKind::BlackHole;
-    CollisionSystem::resolveContacts(black_hole, hard_body_absorption, 0.0);
-    CollisionSystem::applyDeferredOutcomes(black_hole, hard_body_absorption);
+    ScalarCollisionSystem::resolveContacts(black_hole, hard_body_absorption, 0.0);
+    ScalarCollisionSystem::applyDeferredOutcomes(black_hole, hard_body_absorption);
     assert(black_hole.bodyCount() == 1);
     assert(black_hole.body(0).id.value == 1);
     assert(black_hole.body(0).kind == BodyKind::BlackHole);
@@ -351,7 +378,7 @@ int main() {
     CollisionSettings transparent_failure_settings;
     transparent_failure_settings.model = CollisionModel::HardBody;
     transparent_failure_settings.maximum_consistency_passes = 50;
-    CollisionSystem::resolveContacts(failed_collision_mode_switch, transparent_failure_settings, 0.0);
+    ScalarCollisionSystem::resolveContacts(failed_collision_mode_switch, transparent_failure_settings, 0.0);
     const CollisionTransitionDiagnostics& transition =
         failed_collision_mode_switch.collisionTransitionDiagnostics();
     assert(failed_collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
@@ -359,11 +386,32 @@ int main() {
     assert(transition.passes == 50);
     assert(transition.unresolved_bodies.size() == 2);
 
+    WorldState scalar_collision_backend(Dimension::Two);
+    WorldState simd_collision_backend(Dimension::Two);
+    const BodyState collision_body_a{{}, {-0.75, 0.0, 0.0}, {1.0, 0.0, 0.0}, 2.0, 1.0, false};
+    const BodyState collision_body_b{{}, {0.75, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 1.0, false};
+    const BodyState collision_body_c{{}, {8.0, 0.0, 0.0}, {}, 1.0, 0.5, false};
+    scalar_collision_backend.addBody(collision_body_a);
+    scalar_collision_backend.addBody(collision_body_b);
+    scalar_collision_backend.addBody(collision_body_c);
+    simd_collision_backend.addBody(collision_body_a);
+    simd_collision_backend.addBody(collision_body_b);
+    simd_collision_backend.addBody(collision_body_c);
+    scalar_collision_backend.setActiveCollisionModel(CollisionModel::HardBody);
+    simd_collision_backend.setActiveCollisionModel(CollisionModel::HardBody);
+    ScalarCollisionSystem::resolveContacts(scalar_collision_backend, hard_body_settings, 0.0);
+    SimdCollisionSystem::resolveContacts(simd_collision_backend, hard_body_settings, 0.0);
+    assert(scalar_collision_backend.collisionEvents().size() == simd_collision_backend.collisionEvents().size());
+    for (std::size_t index = 0; index < scalar_collision_backend.bodyCount(); ++index) {
+        assert(scalar_collision_backend.body(index).position == simd_collision_backend.body(index).position);
+        assert(scalar_collision_backend.body(index).velocity == simd_collision_backend.body(index).velocity);
+    }
+
     WorldState multi_pass_collision_mode_switch(Dimension::Two);
     for (std::size_t index = 0; index < 3; ++index) {
         multi_pass_collision_mode_switch.addBody({{}, {static_cast<double>(index), 0.0, 0.0}, {}, 1.0, 1.0, false});
     }
-    CollisionSystem::resolveContacts(multi_pass_collision_mode_switch, hard_body_settings, 0.0);
+    ScalarCollisionSystem::resolveContacts(multi_pass_collision_mode_switch, hard_body_settings, 0.0);
     const CollisionTransitionDiagnostics& multi_pass_transition =
         multi_pass_collision_mode_switch.collisionTransitionDiagnostics();
     assert(multi_pass_collision_mode_switch.activeCollisionModel() == CollisionModel::HardBody);
@@ -391,7 +439,7 @@ int main() {
         dense_dynamic_collision_mode_switch.body(3).position,
         dense_dynamic_collision_mode_switch.body(4).position,
         dense_dynamic_collision_mode_switch.body(5).position};
-    CollisionSystem::resolveContacts(dense_dynamic_collision_mode_switch, hard_body_settings, 0.0);
+    ScalarCollisionSystem::resolveContacts(dense_dynamic_collision_mode_switch, hard_body_settings, 0.0);
     const CollisionTransitionDiagnostics& dense_dynamic_transition =
         dense_dynamic_collision_mode_switch.collisionTransitionDiagnostics();
     assert(dense_dynamic_collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
@@ -418,7 +466,7 @@ int main() {
         dense_failed_collision_mode_switch.body(5).position,
         dense_failed_collision_mode_switch.body(6).position,
         dense_failed_collision_mode_switch.body(7).position};
-    CollisionSystem::resolveContacts(dense_failed_collision_mode_switch, hard_body_settings, 0.0);
+    ScalarCollisionSystem::resolveContacts(dense_failed_collision_mode_switch, hard_body_settings, 0.0);
     const CollisionTransitionDiagnostics& dense_transition =
         dense_failed_collision_mode_switch.collisionTransitionDiagnostics();
     assert(dense_failed_collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
@@ -468,7 +516,7 @@ int main() {
          + fragmenting_3d.body(1).position * fragmenting_3d.body(1).mass) * (1.0 / 12.0);
     const Vec3 initial_momentum = fragmenting_3d.body(0).velocity * fragmenting_3d.body(0).mass
         + fragmenting_3d.body(1).velocity * fragmenting_3d.body(1).mass;
-    ScalarFullSolver fragment_solver;
+    ScalarFullPhysicsEngine fragment_solver;
     fragment_solver.step(fragmenting_3d, fragment_parameters);
     assert(fragmenting_3d.bodyCount() == 8);
     double fragmenting_3d_mass = 0.0;

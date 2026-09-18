@@ -5,6 +5,7 @@
 #include "simulation/spatial_tree.hpp"
 
 #include <algorithm>
+#include <array>
 #include <immintrin.h>
 #include <memory>
 #include <span>
@@ -21,7 +22,6 @@ struct SimdCollisionWorkspace {
           looseness(settings.looseness) {}
 
     SpatialTree tree;
-    std::vector<std::pair<std::size_t, std::size_t>> candidates;
     std::vector<std::pair<std::size_t, std::size_t>> contacts;
     std::size_t leaf_capacity;
     std::size_t maximum_depth;
@@ -41,10 +41,14 @@ SimdCollisionWorkspace& collisionWorkspace(Dimension dimension,
 }
 
 void filterContactPairsAvx2(const WorldState& world, Dimension dimension,
-    const std::vector<std::pair<std::size_t, std::size_t>>& candidates,
+    std::span<const std::pair<std::size_t, std::size_t>> candidates,
     std::vector<std::pair<std::size_t, std::size_t>>& contacts) {
-    contacts.clear();
-    if (contacts.capacity() < candidates.size()) contacts.reserve(candidates.size());
+    const std::size_t required_capacity = contacts.size() + candidates.size();
+    if (contacts.capacity() < required_capacity) {
+        const std::size_t doubled_capacity = contacts.capacity() == 0
+            ? 64 : contacts.capacity() * 2;
+        contacts.reserve(std::max(required_capacity, doubled_capacity));
+    }
     const BodyStorage& storage = world.bodyStorage();
     const double* position_x = storage.positionX().data();
     const double* position_y = storage.positionY().data();
@@ -107,27 +111,38 @@ void SimdCollisionSystem::resolveContacts(WorldState& world,
     }
 
     SimdCollisionWorkspace& workspace = collisionWorkspace(world.dimension(), settings.broad_phase);
-    auto& candidates = workspace.candidates;
-    if (settings.broad_phase.spatial_tree_enabled) {
-        workspace.tree.rebuild(world.bodyStorage());
-        workspace.tree.potentialBodyPairs(world.bodyStorage(), candidates);
-    } else {
-        candidates.clear();
-        const std::size_t pair_count = world.bodyCount() * (world.bodyCount() - 1) / 2;
-        if (candidates.capacity() < pair_count) candidates.reserve(pair_count);
-        for (std::size_t first = 0; first < world.bodyCount(); ++first) {
-            for (std::size_t second = first + 1; second < world.bodyCount(); ++second) {
-                candidates.emplace_back(first, second);
-            }
-        }
-    }
+    auto& contacts = workspace.contacts;
+    contacts.clear();
 
     // Collision response mutates the authoritative Vec3 positions. Keep the
     // component arrays coherent before the AVX2 gather phase.
     world.bodyStorage().synchronizePositionComponents();
-    filterContactPairsAvx2(world, world.dimension(), candidates, workspace.contacts);
+    if (settings.broad_phase.spatial_tree_enabled) {
+        workspace.tree.rebuild(world.bodyStorage());
+        workspace.tree.forEachPotentialBodyPairBatch(world.bodyStorage(),
+            [&](std::span<const std::pair<std::size_t, std::size_t>> candidates) {
+                filterContactPairsAvx2(world, world.dimension(), candidates, contacts);
+            });
+    } else {
+        constexpr std::size_t batch_capacity = 64;
+        std::array<std::pair<std::size_t, std::size_t>, batch_capacity> batch{};
+        std::size_t batch_size = 0;
+        const auto flush = [&]() {
+            filterContactPairsAvx2(world, world.dimension(),
+                                   std::span<const std::pair<std::size_t, std::size_t>>(
+                                       batch.data(), batch_size), contacts);
+            batch_size = 0;
+        };
+        for (std::size_t first = 0; first < world.bodyCount(); ++first) {
+            for (std::size_t second = first + 1; second < world.bodyCount(); ++second) {
+                batch[batch_size++] = {first, second};
+                if (batch_size == batch_capacity) flush();
+            }
+        }
+        if (batch_size != 0) flush();
+    }
     ScalarCollisionSystem::resolveContactsForPairs(world, settings, gravitational_constant,
-                                                   workspace.contacts);
+                                                   contacts);
 }
 
 void SimdCollisionSystem::applyDeferredOutcomes(WorldState& world,
