@@ -3,11 +3,11 @@
 namespace nbody {
 
 BodyState ConstBodyView::snapshot() const {
-    return {id, position, velocity, mass, radius, is_static(), material, accumulated_damage};
+    return {id, position, velocity, mass, radius, is_static(), material, accumulated_damage, kind};
 }
 
 BodyState MutableBodyView::snapshot() const {
-    return {id, position, velocity, mass, radius, is_static(), material, accumulated_damage};
+    return {id, position, velocity, mass, radius, is_static(), material, accumulated_damage, kind};
 }
 
 void BodyStorage::reserve(std::size_t count) {
@@ -22,6 +22,7 @@ void BodyStorage::reserve(std::size_t count) {
     ids_.reserve(count);
     materials_.reserve(count);
     accumulated_damage_.reserve(count);
+    kinds_.reserve(count);
 }
 
 void BodyStorage::clear() {
@@ -36,6 +37,7 @@ void BodyStorage::clear() {
     ids_.clear();
     materials_.clear();
     accumulated_damage_.clear();
+    kinds_.clear();
 }
 
 void BodyStorage::append(const BodyState& body) {
@@ -50,6 +52,7 @@ void BodyStorage::append(const BodyState& body) {
     ids_.push_back(body.id);
     materials_.push_back(body.material);
     accumulated_damage_.push_back(body.accumulated_damage);
+    kinds_.push_back(body.kind);
 }
 
 void BodyStorage::synchronizePositionComponents() const {
@@ -67,12 +70,12 @@ void BodyStorage::synchronizePositionComponents() const {
 
 ConstBodyView BodyStorage::view(std::size_t index) const {
     return {ids_[index], positions_[index], velocities_[index], masses_[index], radii_[index],
-            static_flags_[index], materials_[index], accumulated_damage_[index]};
+            static_flags_[index], materials_[index], accumulated_damage_[index], kinds_[index]};
 }
 
 MutableBodyView BodyStorage::mutableView(std::size_t index) {
     return {ids_[index], positions_[index], velocities_[index], masses_[index], radii_[index],
-            static_flags_[index], materials_[index], accumulated_damage_[index]};
+            static_flags_[index], materials_[index], accumulated_damage_[index], kinds_[index]};
 }
 
 std::vector<BodyState> BodyStorage::snapshot() const {

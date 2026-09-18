@@ -6,6 +6,7 @@
 #include "simulation/collision_system.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -40,6 +41,57 @@ int runIsolatedSolver(std::string_view label, std::size_t body_count, int steps,
 
 int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? std::string_view(argv[1]) : std::string_view{};
+    const bool fragmentation_benchmark = mode == "fragmentation";
+    if (fragmentation_benchmark) {
+        const std::size_t body_count = argc > 2 ? std::stoull(argv[2]) : 256;
+        const std::size_t fragment_count = argc > 3 ? std::stoull(argv[3]) : 4;
+        const std::size_t reserved_capacity = argc > 4 ? std::stoull(argv[4]) : 0;
+        if (body_count == 0 || fragment_count < 2) {
+            std::cerr << "fragmentation benchmark requires bodies > 0 and fragments >= 2\n";
+            return 2;
+        }
+
+        nbody::WorldState world(nbody::Dimension::Two);
+        if (reserved_capacity != 0) world.reserveBodies(reserved_capacity);
+        for (std::size_t index = 0; index < body_count; ++index) {
+            world.addBody({{}, {0.0, 0.0, 0.0}, {}, 1.0, 1.0, false});
+        }
+
+        nbody::CollisionSettings settings;
+        settings.model = nbody::CollisionModel::HardBody;
+        settings.minimum_fragments = fragment_count;
+        settings.maximum_fragments = fragment_count;
+        settings.maximum_fragment_count = body_count * fragment_count;
+        settings.classifier.force_fragmentation = true;
+        // This benchmark measures fragmentation while hard-body mode is already active.
+        world.setActiveCollisionModel(nbody::CollisionModel::HardBody);
+
+        const double initial_mass = world.diagnostics().total_mass;
+        const auto resolve_start = std::chrono::steady_clock::now();
+        nbody::CollisionSystem::resolveContacts(world, settings, 0.0);
+        const auto resolve_elapsed = std::chrono::steady_clock::now() - resolve_start;
+        const auto apply_start = std::chrono::steady_clock::now();
+        nbody::CollisionSystem::applyDeferredOutcomes(world, settings);
+        const auto apply_elapsed = std::chrono::steady_clock::now() - apply_start;
+        const double resolve_ms = std::chrono::duration<double, std::milli>(resolve_elapsed).count();
+        const double apply_ms = std::chrono::duration<double, std::milli>(apply_elapsed).count();
+        const double final_mass = world.diagnostics().total_mass;
+        std::cout << "fragmentation benchmark dimension=2D"
+                  << " initial_bodies=" << body_count
+                  << " requested_fragments=" << fragment_count
+                  << " reserved_capacity=" << reserved_capacity
+                  << " collision_events=" << world.collisionEvents().size()
+                  << " final_bodies=" << world.bodyCount()
+                  << " growth=" << (world.bodyCount() - body_count)
+                  << " resolve_ms=" << resolve_ms
+                  << " apply_ms=" << apply_ms
+                  << " total_ms=" << (resolve_ms + apply_ms)
+                  << " mass_error=" << (final_mass - initial_mass)
+                  << " finite=" << (world.diagnostics().finite ? "true" : "false")
+                  << " valid=" << (world.isValid() ? "true" : "false") << '\n';
+        return world.isValid() && world.bodyCount() == body_count * fragment_count
+            && std::abs(final_mass - initial_mass) < 1e-10 ? 0 : 1;
+    }
     const bool isolated_mode = mode == "scalar-bh" || mode == "simd-bh"
         || mode == "scalar-full" || mode == "simd-full";
     if (isolated_mode) {

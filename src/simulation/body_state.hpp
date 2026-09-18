@@ -1,6 +1,7 @@
 #pragma once
 
 #include "body_id.hpp"
+#include "body_kind.hpp"
 #include "material_properties.hpp"
 #include "vec3.hpp"
 
@@ -15,6 +16,7 @@ struct BodyState {
     bool is_static{false};
     MaterialProperties material;
     double accumulated_damage{0.0};
+    BodyKind kind{BodyKind::Ordinary};
 };
 
 }

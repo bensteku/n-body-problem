@@ -418,6 +418,13 @@ enum class BodyKind {
 
 Future kinds such as gas body, star, or solid planet should preferably be material/physics property combinations rather than an explosion of subclasses.
 
+The simulation may use a compact `BodyKind` classification for behavior that cannot
+be inferred from material values alone. Ordinary bodies use material presets for
+rocky, metallic, or icy behavior; gas bodies and stars can opt into accretion-like
+absorption behavior; black holes are a separate protected kind. These kinds are
+metadata, not subclasses, and should remain separate from editable material
+properties.
+
 ## 7. Appearance, colors, and lighting
 
 ### 7.1 Three-color palette
@@ -584,13 +591,12 @@ Collision behavior is a runtime UI-accessible setting.
 ~~~cpp
 enum class CollisionModel {
     Transparent,
-    HardBody,
-    HeuristicFragmentation,
-    HeuristicAbsorption
+    HardBody
 };
 ~~~
 
-Only the first two are required initially.
+Fragmentation and absorption are hard-body outcome settings, not collision
+models. They are only valid when `CollisionModel::HardBody` is selected.
 
 ### 9.2 Transparent bodies
 
@@ -607,6 +613,33 @@ or a finite force cap when separation approaches zero.
 The softening length should be editable and visible in the numerical settings.
 
 Transparent mode should not silently use hard-body collision tests.
+
+### 9.2.1 Runtime collision-mode transitions
+
+Collision classifier settings, including damage, fragmentation, and absorption policy, are
+valid only while hard-body collision mode is active. Transparent mode must not
+silently classify contacts, generate fragments, or absorb bodies; attempting to
+enable any of these settings while transparent mode is selected must be
+rejected as an invalid runtime configuration.
+
+Fragmentation is an outcome layered on top of hard-body contact resolution. It
+is not a separate contact solver: a fragmenting contact still performs
+hard-body overlap correction, impact calculation, impulse response, and event
+classification before deferred body mutation.
+
+When switching from transparent to hard-body mode at a runtime-safe boundary,
+the collision system must first check for overlapping bodies. Overlaps are
+resolved by moving the bodies apart along their contact axis until they merely
+touch, using inverse-mass weighting and treating static bodies as immovable.
+The correction must run in multiple passes because separating one pair can
+create or expose another overlap. The pass count is capped at 50. If overlaps
+remain after the cap, the transition fails: the world remains in transparent
+mode, and diagnostics must expose the failed pass count and the IDs of bodies
+still involved in overlaps so the frontend can highlight them.
+
+The transition check must be dimension-aware. In 2D it operates in X/Y and
+keeps Z constrained to zero. In 3D it operates in X/Y/Z without flattening
+positions or velocities.
 
 ### 9.3 Hard bodies
 
@@ -629,11 +662,26 @@ Continuous collision detection may be needed later when bodies move far enough i
 
 Future collision outcomes may include:
 
-- solid + solid: merge, partial fragmentation, or a configurable heuristic;
+- solid + solid: merge, partial fragmentation, or a configurable hard-body outcome;
 - small solid + large body: large body gains most mass and loses a small amount as ejecta;
-- solid + gas/star body: solid body is absorbed and the non-solid body gains its mass;
+- solid + gas/star body: the solid is absorbed when it is below both configurable
+  mass and size ratios relative to the absorber; otherwise the solid destroys the
+  absorber and receives a momentum-weighted velocity slowdown while retaining its
+  own mass and radius. The default mass and size ratios are both 2.0 and are
+  independently exposed as collision settings;
+- gas/star absorbers are immune to damage and fragmentation. Absorber-versus-
+  absorber selection compares mass first; near-equal masses use size as the
+  tie-breaker, followed by body-array index;
+- black holes absorb solid bodies regardless of the solid-dominance thresholds,
+  defeat every non-black-hole absorber, and participate in ordinary absorber
+  comparisons against other black holes;
 - fragmentation: a body splits into a deterministic or seeded count between configurable minimum and maximum fragment counts (defaulting to 2–5), subject to a configurable per-step fragment cap; total mass approximately equals the original;
 - conservation of mass and approximate conservation of momentum.
+
+Fragmentation geometry must be dimension-correct: 2D fragments use balanced
+planar directions, while 3D fragments use balanced XYZ directions. Fragment
+position and velocity offsets must preserve the parent center of mass and
+linear momentum within numerical tolerance.
 
 Body creation/removal must occur in a deferred mutation phase. A solver or collision loop must never invalidate its own iteration by directly resizing body storage.
 
@@ -1893,6 +1941,10 @@ Implement:
 - conservation diagnostics;
 - configurable minimum and maximum fragments per collision;
 - configurable total fragment cap per mutation phase;
+- runtime hard-body/transparent transition consistency checks with a bounded
+  50-pass overlap untangling failure path and unresolved-body diagnostics;
+- dimension-correct 2D and 3D fragmentation geometry, including conservation
+  tests for mass, center of mass, and linear momentum;
 - deferred mutation and replay support.
 
 Deliverable: visually interesting collision outcomes without pretending to perform full material-disintegration simulation.

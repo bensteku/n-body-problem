@@ -17,6 +17,7 @@ struct ConstBodyView {
     const std::uint8_t& static_flag;
     const MaterialProperties& material;
     const double& accumulated_damage;
+    const BodyKind& kind;
 
     BodyState snapshot() const;
     bool is_static() const { return static_flag != 0; }
@@ -31,6 +32,7 @@ struct MutableBodyView {
     std::uint8_t& static_flag;
     MaterialProperties& material;
     double& accumulated_damage;
+    BodyKind& kind;
 
     BodyState snapshot() const;
     bool is_static() const { return static_flag != 0; }
@@ -71,6 +73,7 @@ private:
     std::vector<BodyId> ids_;
     std::vector<MaterialProperties> materials_;
     std::vector<double> accumulated_damage_;
+    std::vector<BodyKind> kinds_;
 };
 
 }

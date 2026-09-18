@@ -5,6 +5,7 @@
 #include "simulation/solvers/simd_barnes_hut_solver.hpp"
 #include "simulation/barnes_hut_tree.hpp"
 #include "simulation/spatial_tree.hpp"
+#include "simulation/collision_system.hpp"
 #include "test_support.hpp"
 
 #define assert(condition) REQUIRE(condition)
@@ -252,6 +253,182 @@ int main() {
     assert(static_collision.collisionEvents()[0].first.outcome == CollisionOutcome::Bounce);
     assert(static_collision.collisionEvents()[0].second.outcome == CollisionOutcome::Bounce);
 
+    WorldState collision_mode_switch(Dimension::Two);
+    collision_mode_switch.addBody({{}, {-0.25, 0.0, 0.0}, {}, 1.0, 0.5, false});
+    collision_mode_switch.addBody({{}, {0.25, 0.0, 0.0}, {}, 1.0, 0.5, false});
+    CollisionSettings hard_body_settings;
+    hard_body_settings.model = CollisionModel::HardBody;
+    hard_body_settings.restitution = 0.0;
+    hard_body_settings.maximum_consistency_passes = 50;
+    CollisionSystem::resolveContacts(collision_mode_switch, hard_body_settings, 0.0);
+    assert(collision_mode_switch.activeCollisionModel() == CollisionModel::HardBody);
+    assert(!collision_mode_switch.collisionTransitionDiagnostics().failed);
+
+    assert((collision_mode_switch.body(1).position - collision_mode_switch.body(0).position).length(Dimension::Two)
+        >= collision_mode_switch.body(0).radius + collision_mode_switch.body(1).radius - 1e-12);
+    CollisionSettings transparent_settings;
+    transparent_settings.model = CollisionModel::Transparent;
+    CollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
+    assert(collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
+    assert(!collision_mode_switch.collisionTransitionDiagnostics().failed);
+
+    bool transparent_fragmentation_rejected = false;
+    transparent_settings.classifier.fragmentation_enabled = true;
+    try {
+        CollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
+    } catch (const std::invalid_argument&) {
+        transparent_fragmentation_rejected = true;
+    }
+    assert(transparent_fragmentation_rejected);
+
+    bool transparent_absorption_rejected = false;
+    transparent_settings.classifier.fragmentation_enabled = false;
+    transparent_settings.classifier.absorption_enabled = true;
+    try {
+        CollisionSystem::resolveContacts(collision_mode_switch, transparent_settings, 0.0);
+    } catch (const std::invalid_argument&) {
+        transparent_absorption_rejected = true;
+    }
+    assert(transparent_absorption_rejected);
+
+    CollisionSettings hard_body_absorption = hard_body_settings;
+    hard_body_absorption.classifier.absorption_enabled = true;
+    CollisionSystem::resolveContacts(collision_mode_switch, hard_body_absorption, 0.0);
+    assert(collision_mode_switch.activeCollisionModel() == CollisionModel::HardBody);
+
+    WorldState gas_absorber(Dimension::Two);
+    gas_absorber.addBody({{}, {-0.25, 0.0, 0.0}, {1.0, 0.0, 0.0}, 10.0, 2.0, false});
+    gas_absorber.addBody({{}, {0.25, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 1.0, 0.5, false});
+    gas_absorber.mutableBody(0).kind = BodyKind::Gas;
+    CollisionSystem::resolveContacts(gas_absorber, hard_body_absorption, 0.0);
+    CollisionSystem::applyDeferredOutcomes(gas_absorber, hard_body_absorption);
+    assert(gas_absorber.bodyCount() == 1);
+    assert(gas_absorber.body(0).id.value == 1);
+    assert(gas_absorber.body(0).kind == BodyKind::Gas);
+    assert(gas_absorber.body(0).mass == 11.0);
+    assert(std::abs(gas_absorber.body(0).velocity.x - 9.0 / 11.0) < 1e-12);
+    assert(gas_absorber.body(0).accumulated_damage == 0.0);
+
+    WorldState static_absorber(Dimension::Two);
+    static_absorber.addBody({{}, {}, {}, 10.0, 2.0, true});
+    static_absorber.addBody({{}, {}, {}, 1.0, 0.5, true});
+    static_absorber.mutableBody(0).kind = BodyKind::Gas;
+    static_absorber.setActiveCollisionModel(CollisionModel::HardBody);
+    CollisionSystem::resolveContacts(static_absorber, hard_body_absorption, 0.0);
+    CollisionSystem::applyDeferredOutcomes(static_absorber, hard_body_absorption);
+    assert(static_absorber.bodyCount() == 1);
+    assert(static_absorber.body(0).kind == BodyKind::Gas);
+    assert(static_absorber.body(0).is_static());
+    assert(static_absorber.body(0).mass == 11.0);
+
+    WorldState dominant_solid(Dimension::Two);
+    dominant_solid.addBody({{}, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 1.0, false});
+    dominant_solid.addBody({{}, {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 3.0, 3.0, false});
+    dominant_solid.mutableBody(0).kind = BodyKind::Gas;
+    CollisionSystem::resolveContacts(dominant_solid, hard_body_absorption, 0.0);
+    CollisionSystem::applyDeferredOutcomes(dominant_solid, hard_body_absorption);
+    assert(dominant_solid.bodyCount() == 1);
+    assert(dominant_solid.body(0).id.value == 2);
+    assert(dominant_solid.body(0).kind == BodyKind::Ordinary);
+    assert(dominant_solid.body(0).mass == 3.0);
+    assert(dominant_solid.body(0).radius == 3.0);
+    assert(std::abs(dominant_solid.body(0).velocity.x + 0.5) < 1e-12);
+
+    WorldState black_hole(Dimension::Two);
+    black_hole.addBody({{}, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 1.0, false});
+    black_hole.addBody({{}, {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 100.0, 100.0, false});
+    black_hole.mutableBody(0).kind = BodyKind::BlackHole;
+    CollisionSystem::resolveContacts(black_hole, hard_body_absorption, 0.0);
+    CollisionSystem::applyDeferredOutcomes(black_hole, hard_body_absorption);
+    assert(black_hole.bodyCount() == 1);
+    assert(black_hole.body(0).id.value == 1);
+    assert(black_hole.body(0).kind == BodyKind::BlackHole);
+    assert(black_hole.body(0).mass == 101.0);
+
+    WorldState failed_collision_mode_switch(Dimension::Two);
+    failed_collision_mode_switch.addBody({{}, {}, {}, 1.0, 1.0, true});
+    failed_collision_mode_switch.addBody({{}, {}, {}, 1.0, 1.0, true});
+    CollisionSettings transparent_failure_settings;
+    transparent_failure_settings.model = CollisionModel::HardBody;
+    transparent_failure_settings.maximum_consistency_passes = 50;
+    CollisionSystem::resolveContacts(failed_collision_mode_switch, transparent_failure_settings, 0.0);
+    const CollisionTransitionDiagnostics& transition =
+        failed_collision_mode_switch.collisionTransitionDiagnostics();
+    assert(failed_collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
+    assert(transition.failed);
+    assert(transition.passes == 50);
+    assert(transition.unresolved_bodies.size() == 2);
+
+    WorldState multi_pass_collision_mode_switch(Dimension::Two);
+    for (std::size_t index = 0; index < 3; ++index) {
+        multi_pass_collision_mode_switch.addBody({{}, {static_cast<double>(index), 0.0, 0.0}, {}, 1.0, 1.0, false});
+    }
+    CollisionSystem::resolveContacts(multi_pass_collision_mode_switch, hard_body_settings, 0.0);
+    const CollisionTransitionDiagnostics& multi_pass_transition =
+        multi_pass_collision_mode_switch.collisionTransitionDiagnostics();
+    assert(multi_pass_collision_mode_switch.activeCollisionModel() == CollisionModel::HardBody);
+    assert(!multi_pass_transition.failed);
+    assert(multi_pass_transition.passes >= 2);
+    for (std::size_t first = 0; first < multi_pass_collision_mode_switch.bodyCount(); ++first) {
+        for (std::size_t second = first + 1; second < multi_pass_collision_mode_switch.bodyCount(); ++second) {
+            const Vec3 displacement = multi_pass_collision_mode_switch.body(second).position
+                - multi_pass_collision_mode_switch.body(first).position;
+            const double combined_radius = multi_pass_collision_mode_switch.body(first).radius
+                + multi_pass_collision_mode_switch.body(second).radius;
+            assert(displacement.lengthSquared(Dimension::Two)
+                >= combined_radius * combined_radius - 1e-10);
+        }
+    }
+
+    WorldState dense_dynamic_collision_mode_switch(Dimension::Two);
+    for (std::size_t index = 0; index < 6; ++index) {
+        dense_dynamic_collision_mode_switch.addBody({{}, {static_cast<double>(index), 0.0, 0.0}, {}, 1.0, 1.0, false});
+    }
+    const std::vector<Vec3> dense_dynamic_original_positions = {
+        dense_dynamic_collision_mode_switch.body(0).position,
+        dense_dynamic_collision_mode_switch.body(1).position,
+        dense_dynamic_collision_mode_switch.body(2).position,
+        dense_dynamic_collision_mode_switch.body(3).position,
+        dense_dynamic_collision_mode_switch.body(4).position,
+        dense_dynamic_collision_mode_switch.body(5).position};
+    CollisionSystem::resolveContacts(dense_dynamic_collision_mode_switch, hard_body_settings, 0.0);
+    const CollisionTransitionDiagnostics& dense_dynamic_transition =
+        dense_dynamic_collision_mode_switch.collisionTransitionDiagnostics();
+    assert(dense_dynamic_collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
+    assert(dense_dynamic_transition.failed);
+    assert(dense_dynamic_transition.passes == 50);
+    assert(!dense_dynamic_transition.unresolved_bodies.empty());
+    for (std::size_t index = 0; index < dense_dynamic_original_positions.size(); ++index) {
+        assert(dense_dynamic_collision_mode_switch.body(index).position == dense_dynamic_original_positions[index]);
+    }
+
+    WorldState dense_failed_collision_mode_switch(Dimension::Two);
+    for (std::size_t index = 0; index < 4; ++index) {
+        dense_failed_collision_mode_switch.addBody({{}, {0.0, 0.0, 0.0}, {}, 1.0, 1.0, true});
+    }
+    for (std::size_t index = 0; index < 4; ++index) {
+        dense_failed_collision_mode_switch.addBody({{}, {0.25 * static_cast<double>(index), 0.0, 0.0}, {}, 1.0, 1.0, false});
+    }
+    const std::vector<Vec3> dense_failed_original_positions = {
+        dense_failed_collision_mode_switch.body(0).position,
+        dense_failed_collision_mode_switch.body(1).position,
+        dense_failed_collision_mode_switch.body(2).position,
+        dense_failed_collision_mode_switch.body(3).position,
+        dense_failed_collision_mode_switch.body(4).position,
+        dense_failed_collision_mode_switch.body(5).position,
+        dense_failed_collision_mode_switch.body(6).position,
+        dense_failed_collision_mode_switch.body(7).position};
+    CollisionSystem::resolveContacts(dense_failed_collision_mode_switch, hard_body_settings, 0.0);
+    const CollisionTransitionDiagnostics& dense_transition =
+        dense_failed_collision_mode_switch.collisionTransitionDiagnostics();
+    assert(dense_failed_collision_mode_switch.activeCollisionModel() == CollisionModel::Transparent);
+    assert(dense_transition.failed);
+    assert(dense_transition.passes == 50);
+    assert(dense_transition.unresolved_bodies.size() >= 4);
+    for (std::size_t index = 0; index < dense_failed_original_positions.size(); ++index) {
+        assert(dense_failed_collision_mode_switch.body(index).position == dense_failed_original_positions[index]);
+    }
+
     WorldState fragmenting(Dimension::Two);
     fragmenting.addBody({{}, {-0.5, 0.0, 0.0}, {1.0, 0.0, 0.0}, 8.0, 1.0, false});
     fragmenting.addBody({{}, {0.5, 0.0, 0.0}, {-1.0, 0.0, 0.0}, 4.0, 1.0, false});
@@ -267,6 +444,50 @@ int main() {
     for (const BodyState& body : fragmenting.bodies()) fragment_mass += body.mass;
     assert(std::abs(fragment_mass - 12.0) < 1e-12);
     assert(fragmenting.isValid());
+    for (std::size_t first = 0; first < fragmenting.bodyCount(); ++first) {
+        assert(fragmenting.body(first).id.isValid());
+        for (std::size_t second = first + 1; second < fragmenting.bodyCount(); ++second) {
+            assert(!(fragmenting.body(first).id == fragmenting.body(second).id));
+        }
+    }
+
+    WorldState fragmenting_3d(Dimension::Three);
+    fragmenting_3d.addBody({{}, {-0.5, 0.0, 0.0}, {1.0, 2.0, 3.0}, 8.0, 1.0, false});
+    fragmenting_3d.addBody({{}, {0.5, 0.0, 0.0}, {-1.0, -1.0, -2.0}, 4.0, 1.0, false});
+    SimulationParameters fragment_parameters;
+    fragment_parameters.dimension = Dimension::Three;
+    fragment_parameters.gravitational_constant = 0.0;
+    fragment_parameters.timestep = 0.0;
+    fragment_parameters.collision.model = CollisionModel::HardBody;
+    fragment_parameters.collision.minimum_fragments = 4;
+    fragment_parameters.collision.maximum_fragments = 4;
+    fragment_parameters.collision.maximum_fragment_count = 32;
+    fragment_parameters.collision.classifier.force_fragmentation = true;
+    const Vec3 initial_center_of_mass =
+        (fragmenting_3d.body(0).position * fragmenting_3d.body(0).mass
+         + fragmenting_3d.body(1).position * fragmenting_3d.body(1).mass) * (1.0 / 12.0);
+    const Vec3 initial_momentum = fragmenting_3d.body(0).velocity * fragmenting_3d.body(0).mass
+        + fragmenting_3d.body(1).velocity * fragmenting_3d.body(1).mass;
+    ScalarFullSolver fragment_solver;
+    fragment_solver.step(fragmenting_3d, fragment_parameters);
+    assert(fragmenting_3d.bodyCount() == 8);
+    double fragmenting_3d_mass = 0.0;
+    Vec3 final_weighted_position{};
+    Vec3 final_momentum{};
+    bool has_z_spread = false;
+    for (std::size_t index = 0; index < fragmenting_3d.bodyCount(); ++index) {
+        const ConstBodyView body = fragmenting_3d.body(index);
+        fragmenting_3d_mass += body.mass;
+        final_weighted_position += body.position * body.mass;
+        final_momentum += body.velocity * body.mass;
+        has_z_spread = has_z_spread || std::abs(body.position.z) > 1e-12;
+    }
+    assert(std::abs(fragmenting_3d_mass - 12.0) < 1e-12);
+    assert((final_weighted_position * (1.0 / fragmenting_3d_mass) - initial_center_of_mass)
+        .length(Dimension::Three) < 1e-10);
+    assert((final_momentum - initial_momentum).length(Dimension::Three) < 1e-10);
+    assert(has_z_spread);
+    assert(fragmenting_3d.isValid());
 
     WorldState damaged(Dimension::Two);
     damaged.addBody({{}, {-0.5, 0.0, 0.0}, {1.0, 0.0, 0.0}, 1.0, 0.75, false});
