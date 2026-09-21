@@ -65,6 +65,9 @@ add_executable(nbody_app
     src/app/simulation_session.cpp
     src/io/snapshot.cpp
     src/frontend/vulkan_frontend.cpp
+    src/rendering/vulkan_renderer.cpp
+    src/rendering/vulkan_pipeline_manager.cpp
+    src/rendering/vulkan_upload_arena.cpp
     third_party/imgui/imgui.cpp
     third_party/imgui/imgui_draw.cpp
     third_party/imgui/imgui_tables.cpp

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "simulation/simulation_frame.hpp"
+#include "rendering/trajectory.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -68,6 +70,9 @@ struct RenderScene {
     std::span<const RenderMaterial> materials;
     float viewport_width{};
     float viewport_height{};
+    std::optional<BodyId> selected_body;
+    std::optional<BodyId> focused_body;
+    TrajectoryView trajectories;
 
     std::span<const RenderBody> cpuBodies() const {
         if (!frame.cpu_snapshot) return {};
@@ -90,8 +95,12 @@ inline RenderScene makeRenderScene(FramePublication frame,
                                    RenderSceneSettings settings = {},
                                    std::span<const RenderMaterial> materials = {},
                                    float viewport_width = 0.0f,
-                                   float viewport_height = 0.0f) {
-    return {std::move(frame), camera, settings, materials, viewport_width, viewport_height};
+                                   float viewport_height = 0.0f,
+                                   std::optional<BodyId> selected_body = {},
+                                   std::optional<BodyId> focused_body = {},
+                                   TrajectoryView trajectories = {}) {
+    return {std::move(frame), camera, settings, materials, viewport_width, viewport_height,
+            selected_body, focused_body, trajectories};
 }
 
 }

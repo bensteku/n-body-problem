@@ -3,6 +3,15 @@
 #include "app/app_state.hpp"
 #include "app/commands.hpp"
 #include "rendering/render_scene.hpp"
+#include "rendering/render_camera.hpp"
+#include "rendering/camera_policy.hpp"
+#include "rendering/render_diagnostics.hpp"
+#include "rendering/render_graph.hpp"
+#include "rendering/render_graph_executor.hpp"
+#include "rendering/render_picking.hpp"
+#include "rendering/render_style.hpp"
+#include "rendering/material_registry.hpp"
+#include "rendering/upload_arena.hpp"
 #include "rendering/vulkan_renderer.hpp"
 
 #define GLFW_INCLUDE_VULKAN
@@ -17,6 +26,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -31,722 +41,24 @@ namespace nbody::frontend {
 
 namespace {
 
-void check(VkResult result, const char* operation) {
-    if (result != VK_SUCCESS) throw std::runtime_error(std::string(operation) + " failed");
+std::string compactNumber(double value, int significant_digits = 6) {
+    char format[16]{};
+    std::snprintf(format, sizeof(format), "%%.%dg", significant_digits);
+    char text[64]{};
+    std::snprintf(text, sizeof(text), format, value);
+    return text;
 }
 
-struct BodyVertex {
-    float position[2];
-    float color[4];
-};
-
-struct BodyInstance {
-    float center[2];
-    float radius[2];
-    float color[4];
-};
+void fixedTextField(const char* id, float width, const std::string& text) {
+    const float height = ImGui::GetTextLineHeightWithSpacing();
+    ImGui::BeginChild(id, {width, height}, false,
+                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar
+                      | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::EndChild();
+}
 
 } // namespace
-
-struct VulkanFrontendContext {
-    VkInstance instance{};
-    VkSurfaceKHR surface{};
-    VkPhysicalDevice physical_device{};
-    VkDevice device{};
-    VkQueue queue{};
-    std::uint32_t queue_family{};
-    VkSwapchainKHR swapchain{};
-    VkFormat format{};
-    VkExtent2D extent{};
-    std::vector<VkImageView> views;
-    VkRenderPass render_pass{};
-    std::vector<VkFramebuffer> framebuffers;
-    VkCommandPool command_pool{};
-    std::vector<VkCommandBuffer> commands;
-    VkSemaphore image_available{};
-    VkSemaphore render_finished{};
-    VkFence fence{};
-    VkDescriptorPool descriptor_pool{};
-    VkPipeline body_pipeline{};
-    VkPipelineLayout body_pipeline_layout{};
-    VkBuffer body_vertex_buffer{};
-    VkDeviceMemory body_vertex_memory{};
-    void* body_vertex_mapping{};
-    VkDeviceSize body_vertex_capacity{};
-    VkPipeline grid_pipeline{};
-    VkBuffer grid_vertex_buffer{};
-    VkDeviceMemory grid_vertex_memory{};
-    void* grid_vertex_mapping{};
-    VkDeviceSize grid_vertex_capacity{};
-    std::vector<BodyInstance> body_instances_;
-    std::vector<BodyVertex> grid_vertices_;
-
-    void initialize(GLFWwindow* window) {
-        createInstance();
-        check(glfwCreateWindowSurface(instance, window, nullptr, &surface), "window surface");
-        selectDevice();
-        createDevice();
-        createSwapchain(window);
-        createRenderPass();
-        createBodyRenderer();
-        createFramebuffers();
-        createCommands();
-        createSync();
-        initializeImGui(window);
-    }
-
-    void render(GLFWwindow* window, ImDrawData* draw_data,
-                const ::nbody::rendering::RenderScene& scene) {
-        check(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX), "wait fence");
-        int framebuffer_width = 0;
-        int framebuffer_height = 0;
-        glfwGetFramebufferSize(window, &framebuffer_width, &framebuffer_height);
-        if (framebuffer_width <= 0 || framebuffer_height <= 0) return;
-        if (static_cast<std::uint32_t>(framebuffer_width) != extent.width
-            || static_cast<std::uint32_t>(framebuffer_height) != extent.height) {
-            recreateSwapchain(window);
-        }
-        buildBodyInstances(scene);
-        buildGridVertices(scene);
-        uploadBodyInstances();
-        uploadGridVertices();
-        std::uint32_t image = 0;
-        const VkResult acquired = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
-                                                         image_available, VK_NULL_HANDLE, &image);
-        if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
-            recreateSwapchain(window);
-            return;
-        }
-        check(acquired, "acquire swapchain image");
-        check(vkResetFences(device, 1, &fence), "reset fence");
-        check(vkResetCommandBuffer(commands[image], 0), "reset command buffer");
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        check(vkBeginCommandBuffer(commands[image], &begin), "begin command buffer");
-        VkClearValue clear{};
-        clear.color = {{0.02f, 0.03f, 0.06f, 1.0f}};
-        VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        pass.renderPass = render_pass;
-        pass.framebuffer = framebuffers[image];
-        pass.renderArea.extent = extent;
-        pass.clearValueCount = 1;
-        pass.pClearValues = &clear;
-        vkCmdBeginRenderPass(commands[image], &pass, VK_SUBPASS_CONTENTS_INLINE);
-        if (!grid_vertices_.empty()) {
-            VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width),
-                                static_cast<float>(extent.height), 0.0f, 1.0f};
-            VkRect2D scissor{{0, 0}, extent};
-            vkCmdSetViewport(commands[image], 0, 1, &viewport);
-            vkCmdSetScissor(commands[image], 0, 1, &scissor);
-            vkCmdBindPipeline(commands[image], VK_PIPELINE_BIND_POINT_GRAPHICS, grid_pipeline);
-            const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(commands[image], 0, 1, &grid_vertex_buffer, &offset);
-            vkCmdDraw(commands[image], static_cast<std::uint32_t>(grid_vertices_.size()), 1, 0, 0);
-        }
-        if (!body_instances_.empty()) {
-            VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width),
-                                static_cast<float>(extent.height), 0.0f, 1.0f};
-            VkRect2D scissor{{0, 0}, extent};
-            vkCmdSetViewport(commands[image], 0, 1, &viewport);
-            vkCmdSetScissor(commands[image], 0, 1, &scissor);
-            vkCmdBindPipeline(commands[image], VK_PIPELINE_BIND_POINT_GRAPHICS, body_pipeline);
-            const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(commands[image], 0, 1, &body_vertex_buffer, &offset);
-            vkCmdDraw(commands[image], 6, static_cast<std::uint32_t>(body_instances_.size()), 0, 0);
-        }
-        ImGui_ImplVulkan_RenderDrawData(draw_data, commands[image]);
-        vkCmdEndRenderPass(commands[image]);
-        check(vkEndCommandBuffer(commands[image]), "end command buffer");
-
-        const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        submit.waitSemaphoreCount = 1;
-        submit.pWaitSemaphores = &image_available;
-        submit.pWaitDstStageMask = &wait_stage;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &commands[image];
-        submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &render_finished;
-        check(vkQueueSubmit(queue, 1, &submit, fence), "submit command buffer");
-
-        VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-        present.waitSemaphoreCount = 1;
-        present.pWaitSemaphores = &render_finished;
-        present.swapchainCount = 1;
-        present.pSwapchains = &swapchain;
-        present.pImageIndices = &image;
-        const VkResult presented = vkQueuePresentKHR(queue, &present);
-        if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR) {
-            recreateSwapchain(window);
-        } else {
-            check(presented, "present");
-        }
-    }
-
-    ~VulkanFrontendContext() {
-        if (device != VK_NULL_HANDLE) vkDeviceWaitIdle(device);
-        ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        destroyBodyRenderer();
-        if (descriptor_pool) vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
-        if (fence) vkDestroyFence(device, fence, nullptr);
-        if (image_available) vkDestroySemaphore(device, image_available, nullptr);
-        if (render_finished) vkDestroySemaphore(device, render_finished, nullptr);
-        if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
-        for (VkFramebuffer framebuffer : framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
-        if (render_pass) vkDestroyRenderPass(device, render_pass, nullptr);
-        for (VkImageView view : views) vkDestroyImageView(device, view, nullptr);
-        if (swapchain) vkDestroySwapchainKHR(device, swapchain, nullptr);
-        if (device) vkDestroyDevice(device, nullptr);
-        if (surface) vkDestroySurfaceKHR(instance, surface, nullptr);
-        if (instance) vkDestroyInstance(instance, nullptr);
-    }
-
-private:
-    void createInstance() {
-        std::uint32_t count = 0;
-        const char** extensions = glfwGetRequiredInstanceExtensions(&count);
-        if (!extensions) throw std::runtime_error("GLFW Vulkan extensions unavailable");
-        VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        application.pApplicationName = "N-Body Simulator";
-        application.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-        application.pEngineName = "N-Body Greenfield";
-        application.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-        application.apiVersion = VK_API_VERSION_1_0;
-        VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
-        info.pApplicationInfo = &application;
-        info.enabledExtensionCount = count;
-        info.ppEnabledExtensionNames = extensions;
-        check(vkCreateInstance(&info, nullptr, &instance), "create Vulkan instance");
-    }
-
-    bool suitable(VkPhysicalDevice candidate, std::uint32_t& selected_family) const {
-        std::uint32_t count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, nullptr);
-        std::vector<VkQueueFamilyProperties> families(count);
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, families.data());
-        for (std::uint32_t index = 0; index < count; ++index) {
-            VkBool32 present = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(candidate, index, surface, &present);
-            if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) {
-                std::uint32_t formats = 0;
-                std::uint32_t modes = 0;
-                vkGetPhysicalDeviceSurfaceFormatsKHR(candidate, surface, &formats, nullptr);
-                vkGetPhysicalDeviceSurfacePresentModesKHR(candidate, surface, &modes, nullptr);
-                if (formats && modes) {
-                    selected_family = index;
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    void selectDevice() {
-        std::uint32_t count = 0;
-        vkEnumeratePhysicalDevices(instance, &count, nullptr);
-        if (!count) throw std::runtime_error("no Vulkan device available");
-        std::vector<VkPhysicalDevice> candidates(count);
-        vkEnumeratePhysicalDevices(instance, &count, candidates.data());
-        for (VkPhysicalDevice candidate : candidates) {
-            if (suitable(candidate, queue_family)) {
-                physical_device = candidate;
-                return;
-            }
-        }
-        throw std::runtime_error("no Vulkan graphics/present queue available");
-    }
-
-    void createDevice() {
-        const float priority = 1.0f;
-        VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-        queue_info.queueFamilyIndex = queue_family;
-        queue_info.queueCount = 1;
-        queue_info.pQueuePriorities = &priority;
-        const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-        VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-        info.queueCreateInfoCount = 1;
-        info.pQueueCreateInfos = &queue_info;
-        info.enabledExtensionCount = 1;
-        info.ppEnabledExtensionNames = extensions;
-        check(vkCreateDevice(physical_device, &info, nullptr, &device), "create Vulkan device");
-        vkGetDeviceQueue(device, queue_family, 0, &queue);
-    }
-
-    void createSwapchain(GLFWwindow* window) {
-        VkSurfaceCapabilitiesKHR capabilities{};
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities);
-        std::uint32_t format_count = 0;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, nullptr);
-        std::vector<VkSurfaceFormatKHR> formats(format_count);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, formats.data());
-        format = formats.front().format;
-        for (const VkSurfaceFormatKHR candidate : formats) {
-            if (candidate.format == VK_FORMAT_B8G8R8A8_SRGB) format = candidate.format;
-        }
-        int width = 0, height = 0;
-        glfwGetFramebufferSize(window, &width, &height);
-        extent = capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()
-            ? capabilities.currentExtent
-            : VkExtent2D{static_cast<std::uint32_t>(std::max(width, 1)), static_cast<std::uint32_t>(std::max(height, 1))};
-        std::uint32_t image_count = capabilities.minImageCount + 1;
-        if (capabilities.maxImageCount) image_count = std::min(image_count, capabilities.maxImageCount);
-        VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
-        info.surface = surface;
-        info.minImageCount = image_count;
-        info.imageFormat = format;
-        info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-        info.imageExtent = extent;
-        info.imageArrayLayers = 1;
-        info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        info.preTransform = capabilities.currentTransform;
-        info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-        info.clipped = VK_TRUE;
-        check(vkCreateSwapchainKHR(device, &info, nullptr, &swapchain), "create swapchain");
-        std::uint32_t actual_count = 0;
-        vkGetSwapchainImagesKHR(device, swapchain, &actual_count, nullptr);
-        std::vector<VkImage> images(actual_count);
-        vkGetSwapchainImagesKHR(device, swapchain, &actual_count, images.data());
-        views.resize(images.size());
-        for (std::size_t index = 0; index < images.size(); ++index) {
-            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            view.image = images[index];
-            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            view.format = format;
-            view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            check(vkCreateImageView(device, &view, nullptr, &views[index]), "create image view");
-        }
-    }
-
-    void createRenderPass() {
-        VkAttachmentDescription color{};
-        color.format = format;
-        color.samples = VK_SAMPLE_COUNT_1_BIT;
-        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        VkAttachmentReference reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-        VkSubpassDescription subpass{};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &reference;
-        VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-        info.attachmentCount = 1;
-        info.pAttachments = &color;
-        info.subpassCount = 1;
-        info.pSubpasses = &subpass;
-        check(vkCreateRenderPass(device, &info, nullptr, &render_pass), "create render pass");
-    }
-
-    void destroyBodyRenderer() {
-        if (body_vertex_mapping) vkUnmapMemory(device, body_vertex_memory);
-        if (body_vertex_buffer) vkDestroyBuffer(device, body_vertex_buffer, nullptr);
-        if (body_vertex_memory) vkFreeMemory(device, body_vertex_memory, nullptr);
-        if (grid_vertex_mapping) vkUnmapMemory(device, grid_vertex_memory);
-        if (grid_vertex_buffer) vkDestroyBuffer(device, grid_vertex_buffer, nullptr);
-        if (grid_vertex_memory) vkFreeMemory(device, grid_vertex_memory, nullptr);
-        if (body_pipeline) vkDestroyPipeline(device, body_pipeline, nullptr);
-        if (grid_pipeline) vkDestroyPipeline(device, grid_pipeline, nullptr);
-        if (body_pipeline_layout) vkDestroyPipelineLayout(device, body_pipeline_layout, nullptr);
-        body_vertex_mapping = nullptr;
-        grid_vertex_mapping = nullptr;
-        body_vertex_buffer = VK_NULL_HANDLE;
-        grid_vertex_buffer = VK_NULL_HANDLE;
-        body_vertex_memory = VK_NULL_HANDLE;
-        grid_vertex_memory = VK_NULL_HANDLE;
-        body_pipeline = VK_NULL_HANDLE;
-        grid_pipeline = VK_NULL_HANDLE;
-        body_pipeline_layout = VK_NULL_HANDLE;
-        body_vertex_capacity = 0;
-        grid_vertex_capacity = 0;
-    }
-
-    void destroySwapchain() {
-        for (VkFramebuffer framebuffer : framebuffers) {
-            vkDestroyFramebuffer(device, framebuffer, nullptr);
-        }
-        framebuffers.clear();
-        for (VkImageView view : views) vkDestroyImageView(device, view, nullptr);
-        views.clear();
-        if (render_pass) {
-            vkDestroyRenderPass(device, render_pass, nullptr);
-            render_pass = VK_NULL_HANDLE;
-        }
-        if (swapchain) {
-            vkDestroySwapchainKHR(device, swapchain, nullptr);
-            swapchain = VK_NULL_HANDLE;
-        }
-    }
-
-    void recreateSwapchain(GLFWwindow* window) {
-        vkDeviceWaitIdle(device);
-        ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        destroyBodyRenderer();
-        destroySwapchain();
-        destroyCommands();
-        createSwapchain(window);
-        createRenderPass();
-        createBodyRenderer();
-        createFramebuffers();
-        createCommands();
-        initializeImGuiBackend(window);
-    }
-
-    std::uint32_t findMemoryType(std::uint32_t filter, VkMemoryPropertyFlags properties) const {
-        VkPhysicalDeviceMemoryProperties memory{};
-        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory);
-        for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            if ((filter & (1u << index))
-                && (memory.memoryTypes[index].propertyFlags & properties) == properties) {
-                return index;
-            }
-        }
-        throw std::runtime_error("no compatible Vulkan memory type");
-    }
-
-    VkShaderModule loadShader(const char* name) {
-        std::ifstream input(std::string(NBODY_SHADER_DIR) + "/" + name,
-                            std::ios::binary | std::ios::ate);
-        if (!input) throw std::runtime_error(std::string("could not open shader ") + name);
-        const std::streamsize size = input.tellg();
-        if (size <= 0 || size % 4 != 0) throw std::runtime_error("invalid SPIR-V shader size");
-        std::vector<char> bytes(static_cast<std::size_t>(size));
-        input.seekg(0);
-        input.read(bytes.data(), size);
-        VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        info.codeSize = bytes.size();
-        info.pCode = reinterpret_cast<const std::uint32_t*>(bytes.data());
-        VkShaderModule module{};
-        check(vkCreateShaderModule(device, &info, nullptr, &module), "create shader module");
-        return module;
-    }
-
-    void createBodyVertexBuffer(VkDeviceSize capacity) {
-        VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        buffer_info.size = capacity;
-        buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        check(vkCreateBuffer(device, &buffer_info, nullptr, &body_vertex_buffer), "create body vertex buffer");
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(device, body_vertex_buffer, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        check(vkAllocateMemory(device, &allocation, nullptr, &body_vertex_memory), "allocate body vertex memory");
-        check(vkBindBufferMemory(device, body_vertex_buffer, body_vertex_memory, 0), "bind body vertex memory");
-        check(vkMapMemory(device, body_vertex_memory, 0, capacity, 0, &body_vertex_mapping),
-              "map body vertex memory");
-        body_vertex_capacity = capacity;
-    }
-
-    void createGridVertexBuffer(VkDeviceSize capacity) {
-        VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        buffer_info.size = capacity;
-        buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        check(vkCreateBuffer(device, &buffer_info, nullptr, &grid_vertex_buffer), "create grid vertex buffer");
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(device, grid_vertex_buffer, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        check(vkAllocateMemory(device, &allocation, nullptr, &grid_vertex_memory), "allocate grid vertex memory");
-        check(vkBindBufferMemory(device, grid_vertex_buffer, grid_vertex_memory, 0), "bind grid vertex memory");
-        check(vkMapMemory(device, grid_vertex_memory, 0, capacity, 0, &grid_vertex_mapping),
-              "map grid vertex memory");
-        grid_vertex_capacity = capacity;
-    }
-
-    void uploadBodyInstances() {
-        const VkDeviceSize required = static_cast<VkDeviceSize>(body_instances_.size() * sizeof(BodyInstance));
-        if (required > body_vertex_capacity) {
-            vkUnmapMemory(device, body_vertex_memory);
-            vkDestroyBuffer(device, body_vertex_buffer, nullptr);
-            vkFreeMemory(device, body_vertex_memory, nullptr);
-            body_vertex_mapping = nullptr;
-            createBodyVertexBuffer(std::max<VkDeviceSize>(required, body_vertex_capacity * 2));
-        }
-        if (required != 0) std::memcpy(body_vertex_mapping, body_instances_.data(), required);
-    }
-
-    void uploadGridVertices() {
-        const VkDeviceSize required = static_cast<VkDeviceSize>(grid_vertices_.size() * sizeof(BodyVertex));
-        if (required > grid_vertex_capacity) {
-            vkUnmapMemory(device, grid_vertex_memory);
-            vkDestroyBuffer(device, grid_vertex_buffer, nullptr);
-            vkFreeMemory(device, grid_vertex_memory, nullptr);
-            grid_vertex_mapping = nullptr;
-            createGridVertexBuffer(std::max<VkDeviceSize>(required, grid_vertex_capacity * 2));
-        }
-        if (required != 0) std::memcpy(grid_vertex_mapping, grid_vertices_.data(), required);
-    }
-
-    void buildBodyInstances(const ::nbody::rendering::RenderScene& scene) {
-        body_instances_.clear();
-        if (!scene.hasCpuBodies()) return;
-        const float width = std::max(1.0f, scene.viewport_width);
-        const float height = std::max(1.0f, scene.viewport_height);
-        const float zoom = static_cast<float>(scene.camera.zoom);
-        const float center_x = width * 0.5f;
-        const float center_y = height * 0.5f;
-        body_instances_.reserve(scene.cpuBodies().size());
-        for (const RenderBody& body : scene.cpuBodies()) {
-            const float screen_x = center_x
-                + (static_cast<float>(body.position.x) - static_cast<float>(scene.camera.position.x)) * zoom;
-            const float screen_y = center_y
-                - (static_cast<float>(body.position.y) - static_cast<float>(scene.camera.position.y)) * zoom;
-            const float red = body.kind == BodyKind::Star ? 1.0f : (body.is_static ? 0.75f : 0.35f);
-            const float green = body.kind == BodyKind::Star ? 0.75f : (body.is_static ? 0.50f : 0.85f);
-            const float blue = body.kind == BodyKind::Star ? 0.25f : 1.0f;
-            body_instances_.push_back({
-                {2.0f * screen_x / width - 1.0f, 2.0f * screen_y / height - 1.0f},
-                {2.0f * std::max(0.75f, static_cast<float>(body.radius) * zoom) / width,
-                 2.0f * std::max(0.75f, static_cast<float>(body.radius) * zoom) / height},
-                {red, green, blue, body.kind == BodyKind::Star ? 1.0f : 0.85f}});
-        }
-    }
-
-    void buildGridVertices(const ::nbody::rendering::RenderScene& scene) {
-        grid_vertices_.clear();
-        if (!scene.settings.grid.visible || scene.settings.grid.spacing <= 0.0
-            || scene.viewport_width <= 0.0f || scene.viewport_height <= 0.0f) return;
-        const double zoom = scene.camera.zoom;
-        const double world_width = scene.viewport_width / zoom;
-        const double world_height = scene.viewport_height / zoom;
-        const double left = scene.camera.position.x - world_width * 0.5;
-        const double right = scene.camera.position.x + world_width * 0.5;
-        const double bottom = scene.camera.position.y - world_height * 0.5;
-        const double top = scene.camera.position.y + world_height * 0.5;
-        const double spacing = scene.settings.grid.spacing;
-        const auto clip = [&](double x, double y) {
-            return std::array<float, 2>{
-                static_cast<float>(2.0 * (x - left) / world_width - 1.0),
-                static_cast<float>(2.0 * (top - y) / world_height - 1.0)};
-        };
-        const int first_x = static_cast<int>(std::floor(left / spacing)) - 1;
-        const int last_x = static_cast<int>(std::ceil(right / spacing)) + 1;
-        const int first_y = static_cast<int>(std::floor(bottom / spacing)) - 1;
-        const int last_y = static_cast<int>(std::ceil(top / spacing)) + 1;
-        constexpr float color[4] = {0.18f, 0.28f, 0.40f, 0.35f};
-        for (int line = first_x; line <= last_x; ++line) {
-            const double x = static_cast<double>(line) * spacing;
-            const auto a = clip(x, bottom);
-            const auto b = clip(x, top);
-            grid_vertices_.push_back({{a[0], a[1]}, {color[0], color[1], color[2], color[3]}});
-            grid_vertices_.push_back({{b[0], b[1]}, {color[0], color[1], color[2], color[3]}});
-        }
-        for (int line = first_y; line <= last_y; ++line) {
-            const double y = static_cast<double>(line) * spacing;
-            const auto a = clip(left, y);
-            const auto b = clip(right, y);
-            grid_vertices_.push_back({{a[0], a[1]}, {color[0], color[1], color[2], color[3]}});
-            grid_vertices_.push_back({{b[0], b[1]}, {color[0], color[1], color[2], color[3]}});
-        }
-    }
-
-    void createBodyRenderer() {
-        createBodyVertexBuffer(4 * 1024 * 1024);
-        createGridVertexBuffer(1024 * 1024);
-        VkShaderModule vertex_shader = loadShader("body.vert.spv");
-        VkShaderModule fragment_shader = loadShader("body.frag.spv");
-        VkPipelineShaderStageCreateInfo stages[2]{};
-        stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-        stages[0].module = vertex_shader;
-        stages[0].pName = "main";
-        stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        stages[1].module = fragment_shader;
-        stages[1].pName = "main";
-        VkVertexInputBindingDescription binding{0, sizeof(BodyInstance), VK_VERTEX_INPUT_RATE_INSTANCE};
-        VkVertexInputAttributeDescription attributes[2]{
-            {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(BodyInstance, center)},
-            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(BodyInstance, radius)}};
-        VkVertexInputAttributeDescription color_attribute{
-            2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(BodyInstance, color)};
-        VkPipelineVertexInputStateCreateInfo vertex_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-        vertex_input.vertexBindingDescriptionCount = 1;
-        vertex_input.pVertexBindingDescriptions = &binding;
-        vertex_input.vertexAttributeDescriptionCount = 3;
-        vertex_input.pVertexAttributeDescriptions = attributes;
-        VkVertexInputAttributeDescription body_attributes[3] = {
-            attributes[0], attributes[1], color_attribute};
-        vertex_input.pVertexAttributeDescriptions = body_attributes;
-        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-        viewport.viewportCount = 1;
-        viewport.scissorCount = 1;
-        VkPipelineRasterizationStateCreateInfo rasterization{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        rasterization.lineWidth = 1.0f;
-        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        VkPipelineColorBlendAttachmentState blend{};
-        blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-            | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        blend.blendEnable = VK_TRUE;
-        blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        blend.colorBlendOp = VK_BLEND_OP_ADD;
-        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        blend.alphaBlendOp = VK_BLEND_OP_ADD;
-        VkPipelineColorBlendStateCreateInfo color_blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        color_blend.attachmentCount = 1;
-        color_blend.pAttachments = &blend;
-        VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dynamic.dynamicStateCount = 2;
-        dynamic.pDynamicStates = dynamic_states;
-        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        check(vkCreatePipelineLayout(device, &layout, nullptr, &body_pipeline_layout),
-              "create body pipeline layout");
-        VkGraphicsPipelineCreateInfo pipeline{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-        pipeline.stageCount = 2;
-        pipeline.pStages = stages;
-        pipeline.pVertexInputState = &vertex_input;
-        pipeline.pInputAssemblyState = &assembly;
-        pipeline.pViewportState = &viewport;
-        pipeline.pRasterizationState = &rasterization;
-        pipeline.pMultisampleState = &multisample;
-        pipeline.pColorBlendState = &color_blend;
-        pipeline.pDynamicState = &dynamic;
-        pipeline.layout = body_pipeline_layout;
-        pipeline.renderPass = render_pass;
-        pipeline.subpass = 0;
-        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &body_pipeline),
-              "create body graphics pipeline");
-        vkDestroyShaderModule(device, fragment_shader, nullptr);
-        vkDestroyShaderModule(device, vertex_shader, nullptr);
-
-        VkShaderModule grid_vertex_shader = loadShader("grid.vert.spv");
-        VkShaderModule grid_fragment_shader = loadShader("grid.frag.spv");
-        VkPipelineShaderStageCreateInfo grid_stages[2]{};
-        grid_stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-        grid_stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-        grid_stages[0].module = grid_vertex_shader;
-        grid_stages[0].pName = "main";
-        grid_stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-        grid_stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        grid_stages[1].module = grid_fragment_shader;
-        grid_stages[1].pName = "main";
-        VkVertexInputBindingDescription grid_binding{0, sizeof(BodyVertex), VK_VERTEX_INPUT_RATE_VERTEX};
-        VkVertexInputAttributeDescription grid_attributes[2]{
-            {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(BodyVertex, position)},
-            {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(BodyVertex, color)}};
-        VkPipelineVertexInputStateCreateInfo grid_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-        grid_input.vertexBindingDescriptionCount = 1;
-        grid_input.pVertexBindingDescriptions = &grid_binding;
-        grid_input.vertexAttributeDescriptionCount = 2;
-        grid_input.pVertexAttributeDescriptions = grid_attributes;
-        VkPipelineInputAssemblyStateCreateInfo grid_assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        grid_assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-        VkGraphicsPipelineCreateInfo grid_pipeline_info = pipeline;
-        grid_pipeline_info.stageCount = 2;
-        grid_pipeline_info.pStages = grid_stages;
-        grid_pipeline_info.pVertexInputState = &grid_input;
-        grid_pipeline_info.pInputAssemblyState = &grid_assembly;
-        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &grid_pipeline_info,
-                                         nullptr, &grid_pipeline), "create grid graphics pipeline");
-        vkDestroyShaderModule(device, grid_fragment_shader, nullptr);
-        vkDestroyShaderModule(device, grid_vertex_shader, nullptr);
-    }
-
-    void createFramebuffers() {
-        framebuffers.resize(views.size());
-        for (std::size_t index = 0; index < views.size(); ++index) {
-            VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-            info.renderPass = render_pass;
-            info.attachmentCount = 1;
-            info.pAttachments = &views[index];
-            info.width = extent.width;
-            info.height = extent.height;
-            info.layers = 1;
-            check(vkCreateFramebuffer(device, &info, nullptr, &framebuffers[index]), "create framebuffer");
-        }
-    }
-
-    void createCommands() {
-        VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pool.queueFamilyIndex = queue_family;
-        check(vkCreateCommandPool(device, &pool, nullptr, &command_pool), "create command pool");
-        commands.resize(framebuffers.size());
-        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocation.commandPool = command_pool;
-        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocation.commandBufferCount = static_cast<std::uint32_t>(commands.size());
-        check(vkAllocateCommandBuffers(device, &allocation, commands.data()), "allocate command buffers");
-    }
-
-    void destroyCommands() {
-        if (command_pool) {
-            vkDestroyCommandPool(device, command_pool, nullptr);
-            command_pool = VK_NULL_HANDLE;
-        }
-        commands.clear();
-    }
-
-    void createSync() {
-        VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-        check(vkCreateSemaphore(device, &semaphore, nullptr, &image_available), "create semaphore");
-        check(vkCreateSemaphore(device, &semaphore, nullptr, &render_finished), "create semaphore");
-        check(vkCreateFence(device, &fence_info, nullptr, &fence), "create fence");
-    }
-
-    void initializeImGui(GLFWwindow* window) {
-        VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000};
-        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-        pool.maxSets = 1000;
-        pool.poolSizeCount = 1;
-        pool.pPoolSizes = &pool_size;
-        check(vkCreateDescriptorPool(device, &pool, nullptr, &descriptor_pool), "create descriptor pool");
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGui::StyleColorsDark();
-        ImGuiStyle& style = ImGui::GetStyle();
-        style.WindowRounding = 8.0f;
-        style.ChildRounding = 6.0f;
-        style.FrameRounding = 5.0f;
-        style.PopupRounding = 7.0f;
-        style.GrabRounding = 5.0f;
-        style.WindowBorderSize = 1.0f;
-        style.FrameBorderSize = 1.0f;
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.035f, 0.045f, 0.080f, 0.96f);
-        style.Colors[ImGuiCol_TitleBg] = ImVec4(0.025f, 0.035f, 0.065f, 1.0f);
-        style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.080f, 0.150f, 0.240f, 1.0f);
-        style.Colors[ImGuiCol_Button] = ImVec4(0.100f, 0.240f, 0.360f, 1.0f);
-        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.140f, 0.380f, 0.520f, 1.0f);
-        style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.100f, 0.300f, 0.440f, 1.0f);
-        initializeImGuiBackend(window);
-    }
-
-    void initializeImGuiBackend(GLFWwindow* window) {
-        ImGui_ImplGlfw_InitForVulkan(window, true);
-        ImGui_ImplVulkan_InitInfo info{};
-        info.ApiVersion = VK_API_VERSION_1_0;
-        info.Instance = instance;
-        info.PhysicalDevice = physical_device;
-        info.Device = device;
-        info.QueueFamily = queue_family;
-        info.Queue = queue;
-        info.DescriptorPool = descriptor_pool;
-        info.MinImageCount = static_cast<std::uint32_t>(views.size());
-        info.ImageCount = static_cast<std::uint32_t>(views.size());
-        info.PipelineInfoMain.RenderPass = render_pass;
-        info.PipelineInfoMain.Subpass = 0;
-        info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-        if (!ImGui_ImplVulkan_Init(&info)) throw std::runtime_error("initialize ImGui Vulkan backend");
-    }
-};
 
 namespace {
 
@@ -765,6 +77,7 @@ public:
             drawTitle();
         } else if (application_.mode == nbody::app::AppMode::Simulation) {
             drawSimulation(window, std::min(elapsed, 0.1));
+            drawRenderDiagnostics(renderer);
         }
         ImGui::Render();
         renderer.render(window, ImGui::GetDrawData(), buildRenderScene());
@@ -783,6 +96,7 @@ private:
     nbody::app::ApplicationState application_;
     nbody::app::CommandDispatcher commands_;
     std::optional<FramePublication> publication_;
+    ::nbody::rendering::TrajectoryHistory trajectory_history_;
     std::chrono::steady_clock::time_point last_frame_{std::chrono::steady_clock::now()};
     double accumulator_{};
     double time_scale_value_{1.0};
@@ -819,10 +133,13 @@ private:
     double last_cursor_x_{};
     double last_cursor_y_{};
     bool have_cursor_position_{};
+    bool left_mouse_down_{};
+    bool camera_dragged_{};
     ImVec2 viewport_min_{};
     ImVec2 viewport_max_{};
     bool reset_confirmation_{};
     std::optional<Dimension> dimension_confirmation_;
+    bool show_render_diagnostics_{};
 
     WorldState& world() { return application_.session.state().world; }
     const WorldState& world() const { return application_.session.state().world; }
@@ -843,9 +160,14 @@ private:
         ::nbody::rendering::RenderSceneSettings settings;
         settings.grid.visible = application_.presentation.grid.visible;
         settings.grid.spacing = static_cast<double>(gridStep(std::min(render_width, render_height)));
+        settings.show_trajectories = application_.presentation.trajectories.visible;
+        settings.show_selection_outline = true;
         return ::nbody::rendering::makeRenderScene(
             publication_.value_or(FramePublication{}), camera, settings, {},
-            render_width, render_height);
+            render_width, render_height,
+            application_.presentation.selection.primary,
+            application_.presentation.focus.body,
+            trajectory_history_.view());
     }
 
     void drawTitle() {
@@ -862,6 +184,44 @@ private:
             commands_.dispatch(nbody::app::StartSimulation{});
         }
         ImGui::TextDisabled("Press Enter to begin");
+        ImGui::End();
+    }
+
+    void drawRenderDiagnostics(const rendering::VulkanRenderer& renderer) {
+        if (!show_render_diagnostics_) return;
+        const auto& diagnostics = renderer.diagnostics();
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos({viewport->WorkPos.x + 16.0f, viewport->WorkPos.y + 56.0f},
+                                ImGuiCond_Always);
+        ImGui::SetNextWindowSize({300.0f, 260.0f}, ImGuiCond_Always);
+        ImGui::Begin("Renderer diagnostics", &show_render_diagnostics_,
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize);
+        ImGui::Text("frames %llu  |  %.1f FPS",
+                    static_cast<unsigned long long>(diagnostics.frame_count),
+                    diagnostics.frames_per_second);
+        ImGui::Text("frame %.3f ms  |  prepare %.3f ms",
+                    diagnostics.frame_milliseconds, diagnostics.cpu_prepare_milliseconds);
+        ImGui::Text("record %.3f ms  |  bodies %zu",
+                    diagnostics.command_record_milliseconds, diagnostics.submitted_bodies);
+        ImGui::Text("upload %zu bytes  |  passes %zu",
+                    diagnostics.uploaded_bytes, diagnostics.compiled_passes);
+        ImGui::Text("barriers %zu  |  external GPU %s",
+                    diagnostics.resource_barriers,
+                    diagnostics.used_external_gpu_frame ? "yes" : "no");
+        ImGui::SeparatorText("CPU command encoding by pass");
+        constexpr const char* pass_names[] = {
+            "depth", "opaque", "transparent", "grid/debug",
+            "trajectories", "selection", "UI"};
+        for (std::size_t index = 0; index < diagnostics.pass_cpu_milliseconds.size(); ++index) {
+            ImGui::Text("%-12s %.3f ms", pass_names[index],
+                        diagnostics.pass_cpu_milliseconds[index]);
+        }
+        ImGui::Separator();
+        ImGui::Text("validation: %s  messages %llu  warnings %llu  errors %llu",
+                    diagnostics.validation_enabled ? "enabled" : "off",
+                    static_cast<unsigned long long>(diagnostics.validation_messages),
+                    static_cast<unsigned long long>(diagnostics.validation_warnings),
+                    static_cast<unsigned long long>(diagnostics.validation_errors));
         ImGui::End();
     }
 
@@ -898,7 +258,13 @@ private:
             accumulator_ -= parameters().timestep;
             ++steps_this_frame;
         }
+        trajectory_history_.setDurationSeconds(std::max(
+            application_.presentation.trajectories.duration_seconds,
+            simulation_timestep_ * 512.0));
+        trajectory_history_.setSamplingIntervalSeconds(std::max(
+            0.05, simulation_timestep_));
         publication_ = application_.session.publishFrame();
+        trajectory_history_.observe(*publication_);
         updateCameraLock();
         if (elapsed > 0.000001) {
             const double measured = static_cast<double>(steps_this_frame) / elapsed;
@@ -966,7 +332,8 @@ private:
         ImGui::SetNextItemWidth(155.0f);
         ImGui::Combo("##time-scale-unit", &time_scale_unit_, rate_units, 4);
         ImGui::SameLine();
-        ImGui::Text("sim time %.3f", displayedSimulationTime());
+        fixedTextField("##sim-time-value", 132.0f,
+                       "sim time " + compactNumber(displayedSimulationTime(), 6));
         ImGui::SameLine();
         int display_unit = static_cast<int>(application_.presentation.units.time);
         const char* display_units[] = {"seconds", "days", "months", "years"};
@@ -976,7 +343,8 @@ private:
                 static_cast<nbody::app::TimeDisplayUnit>(display_unit)});
         }
         ImGui::SameLine();
-        ImGui::Text("| bodies %zu", world().bodyCount());
+        fixedTextField("##body-count", 92.0f,
+                       "| bodies " + std::to_string(world().bodyCount()));
         ImGui::SameLine();
         if (ImGui::Button(application_.presentation.grid.visible ? "Hide grid" : "Show grid")) {
             commands_.dispatch(nbody::app::SetGridVisible{!application_.presentation.grid.visible});
@@ -995,7 +363,7 @@ private:
             reset_confirmation_ = true;
         }
         ImGui::SameLine(ImGui::GetWindowWidth() - 28.0f);
-        if (ImGui::SmallButton("v")) panel(nbody::app::PanelEdge::Top).expanded = false;
+        if (ImGui::SmallButton("^")) panel(nbody::app::PanelEdge::Top).expanded = false;
         ImGui::End();
 
         if (reset_confirmation_) {
@@ -1048,6 +416,7 @@ private:
         constexpr float height = 48.0f;
         const float progress = panel(nbody::app::PanelEdge::Bottom).animation_progress;
         const float render_span = std::min(viewport->WorkSize.x, viewport->WorkSize.y);
+        const int active_backend = static_cast<int>(parameters().solver.backend);
         ImGui::SetNextWindowPos({viewport->WorkPos.x,
                                  viewport->WorkPos.y + viewport->WorkSize.y - height * progress},
                                 ImGuiCond_Always);
@@ -1056,12 +425,46 @@ private:
         ImGui::SetNextItemWidth(115.0f);
         ImGui::InputDouble("##timestep", &simulation_timestep_, 0.001, 0.01, "%.6g");
         ImGui::SameLine();
-        ImGui::Text("step s  |  sim %.1f frames/s  |  %s", simulation_steps_per_second_,
-                    simulationRunning() ? "running" : "paused");
+        fixedTextField("##simulation-rate", 218.0f,
+                       "step s | sim " + compactNumber(simulation_steps_per_second_, 5)
+                       + " fps | " + (simulationRunning() ? "running" : "paused"));
         ImGui::SameLine();
-        ImGui::Text("|  zoom %.3g  |  grid %.3g %s", view_scale_,
-                    gridDistance(render_span).value,
-                    gridDistance(render_span).unit);
+        fixedTextField("##backend-label", 62.0f, "| backend");
+        ImGui::SameLine();
+        int selected_backend = active_backend;
+        const char* backend_names[] = {"Scalar", "SIMD"};
+        ImGui::SetNextItemWidth(85.0f);
+        ImGui::BeginDisabled(simulationRunning());
+        if (ImGui::Combo("##backend", &selected_backend, backend_names, 2)
+            && selected_backend != active_backend) {
+            SolverConfiguration configuration = parameters().solver;
+            configuration.backend = static_cast<ComputeBackend>(selected_backend);
+            commands_.dispatch(nbody::app::SwitchSolver{configuration});
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        fixedTextField("##gpu-status", 112.0f, "GPU unavailable");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(show_render_diagnostics_ ? "Hide render stats" : "Render stats")) {
+            show_render_diagnostics_ = !show_render_diagnostics_;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton(application_.presentation.trajectories.visible
+                ? "Hide orbits" : "Show orbits")) {
+            application_.presentation.trajectories.visible =
+                !application_.presentation.trajectories.visible;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(92.0f);
+        ImGui::InputDouble("##trajectory-duration",
+                           &application_.presentation.trajectories.duration_seconds,
+                           1.0, 10.0, "%.3g s");
+        ImGui::SameLine();
+        const GridDistance distance = gridDistance(render_span);
+        fixedTextField("##camera-status", 190.0f,
+                       "| zoom " + compactNumber(view_scale_, 5)
+                       + " | grid " + compactNumber(distance.value, 5)
+                       + " " + distance.unit);
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset view")) {
             camera_x_ = 0.0f;
@@ -1069,7 +472,7 @@ private:
             view_scale_ = 20.0f;
         }
         ImGui::SameLine(ImGui::GetWindowWidth() - 28.0f);
-        if (ImGui::SmallButton("^")) panel(nbody::app::PanelEdge::Bottom).expanded = false;
+        if (ImGui::SmallButton("v")) panel(nbody::app::PanelEdge::Bottom).expanded = false;
         ImGui::End();
     }
 
@@ -1148,9 +551,10 @@ private:
         if (ImGui::Button("Fold")) panel(nbody::app::PanelEdge::Left).expanded = false;
         ImGui::SameLine();
         if (application_.presentation.focus.body) {
-            ImGui::Text("Locked to #%llu", static_cast<unsigned long long>(application_.presentation.focus.body->value));
+            fixedTextField("##focused-body", 178.0f,
+                           "Locked to #" + std::to_string(application_.presentation.focus.body->value));
         }
-        else ImGui::TextDisabled("Select a body to inspect");
+        else fixedTextField("##focused-body", 178.0f, "Select a body to inspect");
         ImGui::Separator();
         if (publication_ && publication_->published()) {
             for (const RenderBody& body : publication_->cpu_snapshot->bodies) {
@@ -1163,7 +567,9 @@ private:
                     commands_.dispatch(nbody::app::FocusBody{body.id});
                 }
                 ImGui::SameLine();
-                ImGui::Text("#%llu  %.3g", static_cast<unsigned long long>(body.id.value), body.mass);
+                fixedTextField("##body-summary", 86.0f,
+                               "#" + std::to_string(body.id.value) + "  "
+                               + compactNumber(body.mass, 4));
                 ImGui::PopID();
             }
         }
@@ -1188,10 +594,16 @@ private:
             for (std::size_t index = 0; index < world().bodyCount(); ++index) {
                 if (world().body(index).id == *selected) {
                     const ConstBodyView body = world().body(index);
-                    ImGui::Text("Body #%llu", static_cast<unsigned long long>(body.id.value));
-                    ImGui::Text("Mass %.6g", body.mass);
-                    ImGui::Text("Radius %.6g", body.radius);
-                    ImGui::Text("Position %.4g, %.4g, %.4g", body.position.x, body.position.y, body.position.z);
+                    fixedTextField("##inspector-body", 260.0f,
+                                   "Body #" + std::to_string(body.id.value));
+                    fixedTextField("##inspector-mass", 260.0f,
+                                   "Mass " + compactNumber(body.mass));
+                    fixedTextField("##inspector-radius", 260.0f,
+                                   "Radius " + compactNumber(body.radius));
+                    fixedTextField("##inspector-position", 260.0f,
+                                   "Position " + compactNumber(body.position.x, 5) + ", "
+                                   + compactNumber(body.position.y, 5) + ", "
+                                   + compactNumber(body.position.z, 5));
                     break;
                 }
             }
@@ -1363,6 +775,8 @@ private:
         const bool over_world = cursor_x >= work_min.x && cursor_x <= work_max.x
             && cursor_y >= work_min.y + 28.0 && cursor_y <= work_max.y;
         const bool ui_using_mouse = ImGui::IsAnyItemActive() || add_body_;
+        const bool left_mouse_down = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        if (left_mouse_down && !left_mouse_down_) camera_dragged_ = false;
         if (over_world && !ui_using_mouse && pending_scroll_ != 0.0) {
             const float old_scale = view_scale_;
             view_scale_ = std::clamp(view_scale_ * std::pow(1.15f, static_cast<float>(pending_scroll_)),
@@ -1382,15 +796,31 @@ private:
                 last_cursor_x_ = cursor_x;
                 last_cursor_y_ = cursor_y;
                 have_cursor_position_ = true;
+                camera_dragged_ = false;
             }
             const double delta_x = cursor_x - last_cursor_x_;
             const double delta_y = cursor_y - last_cursor_y_;
             if (delta_x != 0.0 || delta_y != 0.0) {
                 commands_.dispatch(nbody::app::FocusBody{std::nullopt});
+                camera_dragged_ = true;
                 camera_x_ -= static_cast<float>(delta_x) / view_scale_;
                 camera_y_ += static_cast<float>(delta_y) / view_scale_;
             }
         }
+        if (!left_mouse_down && left_mouse_down_ && over_world && !camera_dragged_ && !ui_using_mouse) {
+            const auto scene = buildRenderScene();
+            const auto full_viewport = ImGui::GetMainViewport();
+            const ::nbody::rendering::PickingQuery query{
+                parameters().dimension,
+                static_cast<float>(cursor_x - full_viewport->WorkPos.x),
+                static_cast<float>(cursor_y - full_viewport->WorkPos.y),
+                {scene.viewport_width, scene.viewport_height},
+                6.0f};
+            const auto result = ::nbody::rendering::pickBody(scene, query);
+            commands_.dispatch(nbody::app::SelectBody{
+                result.hit ? std::optional<BodyId>{result.hit->body} : std::nullopt});
+        }
+        left_mouse_down_ = left_mouse_down;
         last_cursor_x_ = cursor_x;
         last_cursor_y_ = cursor_y;
         have_cursor_position_ = true;
@@ -1403,10 +833,8 @@ private:
     }
 
     float maximumViewScale(float viewport_width) const {
-        constexpr double moon_diameter_km = 2.0 * 1737.4;
-        constexpr double margin_factor = 1.3;
-        const double moon_span_world = moon_diameter_km * margin_factor / worldKilometersPerUnit();
-        return std::max(0.25f, static_cast<float>(viewport_width / moon_span_world));
+        return ::nbody::rendering::zoomPolicy(
+            scaled_solar_system_, worldKilometersPerUnit(), viewport_width).maximum;
     }
 
     float gridStep(float viewport_span) const {
@@ -1543,29 +971,6 @@ private:
 } // namespace
 
 } // namespace nbody::frontend
-
-namespace nbody::rendering {
-
-struct VulkanRenderer::Impl {
-    ::nbody::frontend::VulkanFrontendContext context;
-};
-
-VulkanRenderer::VulkanRenderer() : impl_(new Impl) {}
-
-VulkanRenderer::~VulkanRenderer() {
-    delete impl_;
-}
-
-void VulkanRenderer::initialize(GLFWwindow* window) {
-    impl_->context.initialize(window);
-}
-
-void VulkanRenderer::render(GLFWwindow* window, ImDrawData* draw_data,
-                            const ::nbody::rendering::RenderScene& scene) {
-    impl_->context.render(window, draw_data, scene);
-}
-
-} // namespace rendering
 
 namespace nbody::frontend {
 

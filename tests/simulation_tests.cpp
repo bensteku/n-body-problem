@@ -2,7 +2,12 @@
 #include "app/commands.hpp"
 #include "io/snapshot.hpp"
 #include "rendering/render_graph.hpp"
+#include "rendering/render_graph_executor.hpp"
 #include "rendering/render_scene.hpp"
+#include "rendering/render_camera.hpp"
+#include "rendering/render_picking.hpp"
+#include "rendering/material_registry.hpp"
+#include "rendering/upload_arena.hpp"
 #include "simulation/world_state.hpp"
 #include "simulation/solvers/scalar_full_physics_engine.hpp"
 #include "simulation/solvers/scalar_approximated_physics_engine.hpp"
@@ -77,6 +82,68 @@ int main() {
     invalid_graph.addPass({"invalid", rendering::RenderPassKind::OpaqueBodies,
                            {{rendering::RenderResourceId{99}, rendering::RenderAccess::Read}}, true});
     assert(!invalid_graph.validate());
+
+    rendering::RenderCamera test_camera;
+    test_camera.zoom = 10.0;
+    const rendering::RenderViewport wide_viewport{800.0f, 400.0f};
+    const auto center_clip = rendering::worldToClip(test_camera, wide_viewport, 0.0, 0.0);
+    const auto edge_clip = rendering::worldToClip(test_camera, wide_viewport, 40.0, 20.0);
+    assert(std::abs(center_clip[0]) < 1e-6f && std::abs(center_clip[1]) < 1e-6f);
+    assert(std::abs(edge_clip[0] - 1.0f) < 1e-6f);
+    assert(std::abs(edge_clip[1] + 1.0f) < 1e-6f);
+    const auto radius_clip = rendering::worldRadiusToClip(test_camera, wide_viewport, 1.0);
+    assert(std::abs(radius_clip[0] - 0.025f) < 1e-6f);
+    assert(std::abs(radius_clip[1] - 0.05f) < 1e-6f);
+
+    WorldState picking_world(Dimension::Two);
+    BodyState picking_body;
+    picking_body.position = {0.0, 0.0, 0.0};
+    picking_body.mass = 1.0;
+    picking_body.radius = 1.0;
+    const BodyId first_pick_id = picking_world.addBody(picking_body);
+    const BodyId second_pick_id = picking_world.addBody(picking_body);
+    FramePublisher picking_publisher(1);
+    const FramePublication picking_publication = picking_publisher.publish(picking_world, {});
+    const rendering::RenderScene picking_scene = rendering::makeRenderScene(
+        picking_publication, test_camera, {}, {}, 100.0f, 100.0f);
+    const rendering::PickingResult picked = rendering::pickBody(picking_scene,
+        {Dimension::Two, 50.0f, 50.0f, {100.0f, 100.0f}, 6.0f});
+    assert(picked.hit.has_value());
+    assert(picked.hit->body == first_pick_id);
+    const rendering::PickingResult unsupported_pick = rendering::pickBody(picking_scene,
+        {Dimension::Three, 50.0f, 50.0f, {100.0f, 100.0f}, 6.0f});
+    assert(!unsupported_pick.supported && !unsupported_pick.hit.has_value());
+    assert(second_pick_id.value > first_pick_id.value);
+
+    rendering::TrajectoryHistory trajectory_history({512, 0.05, 60.0});
+    trajectory_history.observe(picking_publication);
+    picking_world.advanceTime(3600.0);
+    const FramePublication large_step_publication = picking_publisher.publish(picking_world, {});
+    trajectory_history.observe(large_step_publication);
+    assert(trajectory_history.view().points.size() == picking_world.bodyCount());
+
+    const rendering::RenderGraph canonical_graph = rendering::RenderGraph::make2D(
+        true, true, true, true, true);
+    rendering::RenderGraphExecutor graph_executor;
+    assert(graph_executor.compile(canonical_graph));
+    assert(graph_executor.passes().size() == 8);
+    assert(graph_executor.passes()[2].kind == rendering::RenderPassKind::OpaqueBodies);
+    assert(graph_executor.passes()[3].kind == rendering::RenderPassKind::TransparentBodies);
+    assert(graph_executor.passes()[6].kind == rendering::RenderPassKind::SelectionOutlines);
+    assert(!graph_executor.barriers().empty());
+
+    rendering::MaterialRegistry materials;
+    const rendering::MaterialId material_id = materials.add({42, {0.1, 0.2, 0.3}, {}, 0.0, 0.8, 0.0});
+    assert(materials.find(material_id) != nullptr);
+    assert(materials.find(9999) == nullptr);
+
+    rendering::UploadArena upload_arena(8);
+    const auto first_upload = upload_arena.allocate(3, 4);
+    const auto second_upload = upload_arena.allocate(5, 16);
+    assert(first_upload.data() == nullptr || first_upload.size() == 3);
+    assert(second_upload.data() == nullptr || second_upload.size() == 5);
+    assert(upload_arena.bytesUsed() == 21);
+    assert(upload_arena.capacity() >= upload_arena.bytesUsed());
 
     PhysicsSession session;
     WorldState session_world = WorldState::deterministic(8, Dimension::Two, 19);

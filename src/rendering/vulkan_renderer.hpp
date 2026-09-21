@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering/render_scene.hpp"
+#include "rendering/render_diagnostics.hpp"
 
 struct GLFWwindow;
 struct ImDrawData;
@@ -20,6 +21,7 @@ public:
     void initialize(GLFWwindow* window);
     void render(GLFWwindow* window, ImDrawData* draw_data,
                 const ::nbody::rendering::RenderScene& scene);
+    const RenderDiagnostics& diagnostics() const;
 
 private:
     struct Impl;

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace nbody::rendering {
@@ -48,6 +49,7 @@ enum class RenderPassKind {
     TransparentBodies,
     GridAndDebug,
     Trajectories,
+    SelectionOutlines,
     UserInterface
 };
 
@@ -62,6 +64,38 @@ struct RenderPassDescription {
 // backends compile it into their own command encoders, barriers, and passes.
 class RenderGraph {
 public:
+    // Canonical 2D pass order. Backends may fuse or specialize these passes,
+    // but the logical ordering remains shared with the future 3D renderer.
+    static RenderGraph make2D(bool has_frame, bool show_trajectories,
+                              bool show_debug, bool show_ui,
+                              bool show_selection = true) {
+        RenderGraph graph;
+        const RenderResourceId color = graph.addResource({{}, RenderResourceKind::ColorTarget, false, true});
+        const RenderResourceId frame = graph.addResource({{}, RenderResourceKind::FrameStorage, false, true});
+        const RenderResourceId depth = graph.addResource({{}, RenderResourceKind::DepthTarget, true, false});
+        if (has_frame) {
+            graph.addPass({"frame import", RenderPassKind::FrameImport,
+                           {{frame, RenderAccess::Read}}, true});
+        }
+        graph.addPass({"depth prepass", RenderPassKind::DepthPrepass,
+                       {{depth, RenderAccess::Write}}, show_debug});
+        if (has_frame) {
+            graph.addPass({"opaque bodies", RenderPassKind::OpaqueBodies,
+                           {{frame, RenderAccess::Read}, {color, RenderAccess::Write}}, true});
+        }
+        graph.addPass({"transparent bodies", RenderPassKind::TransparentBodies,
+                       {{frame, RenderAccess::Read}, {color, RenderAccess::ReadWrite}}, true});
+        graph.addPass({"grid and debug", RenderPassKind::GridAndDebug,
+                       {{color, RenderAccess::ReadWrite}}, show_debug});
+        graph.addPass({"trajectories", RenderPassKind::Trajectories,
+                       {{color, RenderAccess::ReadWrite}}, show_trajectories});
+        graph.addPass({"selection outlines", RenderPassKind::SelectionOutlines,
+                       {{color, RenderAccess::ReadWrite}}, show_selection});
+        graph.addPass({"user interface", RenderPassKind::UserInterface,
+                       {{color, RenderAccess::ReadWrite}}, show_ui});
+        return graph;
+    }
+
     RenderResourceId addResource(RenderResourceDescription description) {
         description.id = {static_cast<std::uint32_t>(resources_.size())};
         resources_.push_back(description);
