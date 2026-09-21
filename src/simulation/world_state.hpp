@@ -24,6 +24,7 @@ public:
 
     Dimension dimension() const { return dimension_; }
     double time() const { return time_; }
+    void setTime(double time) { time_ = time; }
     std::size_t bodyCount() const { return storage_.size(); }
     void reserveBodies(std::size_t count) { storage_.reserve(count); }
     // Snapshotting is intentionally explicit: simulation hot paths should use body()/mutableBody().

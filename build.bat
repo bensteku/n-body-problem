@@ -43,14 +43,15 @@ if /I not "%FORCE_MODEL%"=="Full" if /I not "%FORCE_MODEL%"=="BaHu" (
     exit /b 2
 )
 
-rem Ninja uses cl.exe directly, so initialize the MSVC x64 environment when needed.
-where cl >nul 2>&1
-if not errorlevel 1 goto tools_ready
-
+rem Ninja uses cl.exe directly. Always initialize the MSVC x64 environment
+rem here: a Developer Shell can still contain cl.exe and headers from
+rem different Visual Studio installations.
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" set "VSWHERE=%ProgramFiles%\Microsoft Visual Studio\Installer\vswhere.exe"
 if exist "%VSWHERE%" for /f "usebackq delims=" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
+set "USER_VCPKG_ROOT=%VCPKG_ROOT%"
 if defined VSINSTALL if exist "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" >nul
+if defined USER_VCPKG_ROOT set "VCPKG_ROOT=%USER_VCPKG_ROOT%"
 
 :tools_ready
 where cmake >nul 2>&1 || (
@@ -74,7 +75,7 @@ if defined VCPKG_ROOT (
         echo        Clone the official vcpkg repository there and run bootstrap-vcpkg.bat.
         exit /b 1
     )
-    set "CMAKE_TOOLCHAIN_ARG=-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
+    set CMAKE_TOOLCHAIN_ARG="-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
     echo Using vcpkg toolchain: %VCPKG_ROOT%
 )
 
@@ -92,16 +93,16 @@ echo.
 
 if "%USE_VS_GENERATOR%"=="0" (
     if /I "%BUILD_MODE%"=="legacy" (
-        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
+        cmake --fresh -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
     ) else (
-        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
+        cmake --fresh -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
     )
 ) else (
     echo Ninja was not found; using Visual Studio 2022 generator.
     if /I "%BUILD_MODE%"=="legacy" (
-        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
+        cmake --fresh -S "%ROOT%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% -DBUILD_VARIANT=%BACKEND% -DFORCE_MODEL=%FORCE_MODEL% %CMAKE_TOOLCHAIN_ARG%
     ) else (
-        cmake -S "%ROOT%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
+        cmake --fresh -S "%ROOT%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_MODE=%BUILD_MODE% %CMAKE_TOOLCHAIN_ARG%
     )
 )
 if errorlevel 1 exit /b %errorlevel%

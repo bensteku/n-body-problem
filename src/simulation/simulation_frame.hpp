@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rendering/frame_contract.hpp"
 #include "world_state.hpp"
 
 #include <cstddef>
@@ -73,6 +74,10 @@ struct FramePublication {
     FramePublicationStatus status{FramePublicationStatus::UnsupportedTransport};
     FrameTransport transport{FrameTransport::CpuSnapshot};
     std::uint64_t sequence{};
+    rendering::FrameDescription description;
+    rendering::FrameSchema schema;
+    rendering::FrameStorageDescription storage;
+    rendering::FrameReadiness readiness;
     FrameLease cpu_snapshot;
     std::string_view message{};
 

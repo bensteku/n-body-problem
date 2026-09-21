@@ -1,3 +1,8 @@
+#include "app/simulation_session.hpp"
+#include "app/commands.hpp"
+#include "io/snapshot.hpp"
+#include "rendering/render_graph.hpp"
+#include "rendering/render_scene.hpp"
 #include "simulation/world_state.hpp"
 #include "simulation/solvers/scalar_full_physics_engine.hpp"
 #include "simulation/solvers/scalar_approximated_physics_engine.hpp"
@@ -15,6 +20,7 @@
 #define assert(condition) REQUIRE(condition)
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
 #include <random>
 #include <vector>
 
@@ -30,6 +36,10 @@ int main() {
     assert(static_cast<bool>(first_publication.cpu_snapshot));
     assert(first_publication.sequence == 1);
     assert(first_publication.cpu_snapshot->dimension == Dimension::Three);
+    assert(first_publication.description.id == first_publication.sequence);
+    assert(first_publication.description.dimension == Dimension::Three);
+    assert(first_publication.storage.kind == rendering::FrameStorageKind::CpuSnapshot);
+    assert(first_publication.readiness.kind == rendering::ReadinessKind::Immediate);
     assert(first_publication.cpu_snapshot->body_count == 1);
     assert(first_publication.cpu_snapshot->bodies.size() == 1);
     assert(first_publication.cpu_snapshot->bodies[0].id == frame_body_id);
@@ -39,6 +49,7 @@ int main() {
     assert(second_publication.published());
     assert(second_publication.sequence == 2);
     assert(second_publication.cpu_snapshot->bodies[0].position.x == 9.0);
+    assert(second_publication.description.body_count == 1);
     assert(first_publication.cpu_snapshot->bodies[0].position.x == 1.0);
     assert(first_publication.cpu_snapshot->body_count_changed);
     assert(second_publication.cpu_snapshot->body_count_changed == false);
@@ -46,6 +57,26 @@ int main() {
         frame_world, {FrameTransport::RendererBuffer});
     assert(!unsupported_publication.published());
     assert(unsupported_publication.status == FramePublicationStatus::UnsupportedTransport);
+
+    const rendering::RenderScene render_scene = rendering::makeRenderScene(first_publication);
+    assert(render_scene.hasCpuBodies());
+    assert(render_scene.cpuBodies().size() == 1);
+    assert(render_scene.cpuBodies()[0].id == frame_body_id);
+    rendering::RenderGraph render_graph;
+    const auto frame_resource = render_graph.addResource({
+        {}, rendering::RenderResourceKind::FrameStorage, false, true});
+    const auto color_resource = render_graph.addResource({
+        {}, rendering::RenderResourceKind::ColorTarget, true, false});
+    render_graph.addPass({"import frame", rendering::RenderPassKind::FrameImport,
+                          {{frame_resource, rendering::RenderAccess::Read}}, true});
+    render_graph.addPass({"draw bodies", rendering::RenderPassKind::OpaqueBodies,
+                          {{frame_resource, rendering::RenderAccess::Read},
+                           {color_resource, rendering::RenderAccess::Write}}, true});
+    assert(render_graph.validate());
+    rendering::RenderGraph invalid_graph;
+    invalid_graph.addPass({"invalid", rendering::RenderPassKind::OpaqueBodies,
+                           {{rendering::RenderResourceId{99}, rendering::RenderAccess::Read}}, true});
+    assert(!invalid_graph.validate());
 
     PhysicsSession session;
     WorldState session_world = WorldState::deterministic(8, Dimension::Two, 19);
@@ -71,6 +102,101 @@ int main() {
     const PhysicsStepResult rejected_step = session.step(session_world, wrong_dimension);
     assert(rejected_step.rejected());
     assert(session_world.time() == session_time);
+
+    nbody::app::SimulationState application_state;
+    application_state.parameters.dimension = Dimension::Two;
+    application_state.parameters.timestep = 0.01;
+    application_state.world.addBody({{}, {2.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, 1.0, 0.1, false});
+    nbody::app::SimulationSession application_session(application_state);
+    application_session.captureInitialState();
+    assert(application_session.hasInitialState());
+    assert(application_session.step().advanced());
+    assert(application_session.state().world.time() > 0.0);
+    assert(application_session.restoreInitialState());
+    assert(application_session.state().world.time() == 0.0);
+    assert(application_session.state().world.bodyCount() == 1);
+    assert(application_session.state().world.body(0).position.x == 2.0);
+    assert(application_session.mode() == nbody::app::SimulationMode::Paused);
+
+    nbody::app::ApplicationState application;
+    nbody::app::CommandDispatcher commands(application);
+    assert(commands.dispatch(nbody::app::StartSimulation{}).applied());
+    assert(commands.dispatch(nbody::app::FinishStartupEdit{}).applied());
+    assert(application.session.mode() == nbody::app::SimulationMode::Paused);
+    assert(commands.dispatch(nbody::app::EnterEditMode{}).applied());
+    nbody::app::CreateBody create_command;
+    create_command.body.position = {1.0, 2.0, 0.0};
+    create_command.body.mass = 2.0;
+    const nbody::app::CommandResult created = commands.dispatch(create_command);
+    assert(created.applied());
+    assert(created.affected_body.has_value());
+    assert(commands.dispatch(nbody::app::SelectBody{created.affected_body}).applied());
+    assert(application.presentation.selection.primary == created.affected_body);
+    assert(commands.dispatch(nbody::app::FocusBody{created.affected_body}).applied());
+    assert(application.presentation.focus.mode == nbody::app::CameraFocus::Mode::FollowBody);
+    assert(commands.dispatch(nbody::app::LeaveEditMode{}).applied());
+    assert(commands.dispatch(nbody::app::RestoreInitialState{}).applied());
+    assert(application.session.state().world.bodyCount() == 0);
+    assert(!application.presentation.selection.primary.has_value());
+    assert(commands.dispatch(nbody::app::ResetToInitialEdit{}).applied());
+    assert(commands.dispatch(nbody::app::SwitchDimension{Dimension::Three}).applied());
+    assert(application.session.state().parameters.dimension == Dimension::Three);
+    assert(application.session.state().world.bodyCount() == 0);
+    assert(commands.dispatch(nbody::app::FinishStartupEdit{}).applied());
+    assert(commands.dispatch(nbody::app::ResetToInitialEdit{}).applied());
+    assert(application.session.mode() == nbody::app::SimulationMode::StartupEdit);
+    assert(application.session.state().parameters.dimension == Dimension::Three);
+
+    nbody::app::SimulationState snapshot_state;
+    snapshot_state.parameters.dimension = Dimension::Three;
+    snapshot_state.parameters.gravitational_constant = 6.67430e-11;
+    snapshot_state.parameters.timestep = 123.5;
+    snapshot_state.parameters.softening_length = 42.0;
+    snapshot_state.parameters.solver.backend = ComputeBackend::SIMD;
+    snapshot_state.parameters.solver.force_model = ForceModel::BarnesHut;
+    snapshot_state.parameters.solver.kind = SolverKind::Approximated;
+    snapshot_state.parameters.solver.threading = ThreadingMode::MultiThreaded;
+    snapshot_state.parameters.solver.worker_count = 3;
+    snapshot_state.parameters.collision.model = CollisionModel::Transparent;
+    snapshot_state.parameters.boundary.enabled = true;
+    snapshot_state.world = WorldState(Dimension::Three);
+    const BodyId snapshot_body_id = snapshot_state.world.addBody({
+        {}, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}, 7.0, 8.0, true});
+    snapshot_state.world.setTime(987.25);
+    snapshot_state.world.setActiveCollisionModel(CollisionModel::Transparent);
+    snapshot_state.world.mutableBody(0).accumulated_damage = 0.375;
+    snapshot_state.world.mutableBody(0).kind = BodyKind::Gas;
+    snapshot_state.world.mutableBody(0).material.density = 12.0;
+    nbody::io::SimulationSnapshot snapshot;
+    snapshot.metadata.name = "round trip test";
+    snapshot.state = snapshot_state;
+    const std::filesystem::path snapshot_path =
+        std::filesystem::temp_directory_path() / "nbody_snapshot_round_trip.nbs";
+    const auto save_result = nbody::io::SnapshotSerializer::save(snapshot_path, snapshot);
+    assert(save_result.succeeded());
+    const auto load_result = nbody::io::SnapshotSerializer::load(snapshot_path);
+    assert(load_result.succeeded());
+    assert(load_result.snapshot.metadata.name == snapshot.metadata.name);
+    assert(load_result.snapshot.state.world.time() == snapshot_state.world.time());
+    assert(load_result.snapshot.state.world.bodyCount() == 1);
+    assert(load_result.snapshot.state.world.body(0).id == snapshot_body_id);
+    assert(load_result.snapshot.state.world.body(0).is_static());
+    assert(load_result.snapshot.state.world.body(0).kind == BodyKind::Gas);
+    assert(load_result.snapshot.state.world.body(0).material.density == 12.0);
+    assert(load_result.snapshot.state.parameters.solver.force_model == ForceModel::BarnesHut);
+    assert(load_result.snapshot.state.parameters.solver.kind == SolverKind::Approximated);
+    assert(load_result.snapshot.state.parameters.solver.threading == ThreadingMode::MultiThreaded);
+    assert(load_result.snapshot.state.parameters.boundary.enabled);
+    nbody::app::ApplicationState loaded_application;
+    nbody::app::CommandDispatcher load_commands(loaded_application);
+    const auto loaded = load_commands.dispatch(nbody::app::LoadSnapshot{snapshot_path});
+    assert(loaded.applied());
+    assert(loaded_application.mode == nbody::app::AppMode::Simulation);
+    assert(loaded_application.session.mode() == nbody::app::SimulationMode::StartupEdit);
+    assert(loaded_application.session.state().world.bodyCount() == 1);
+    const auto saved = load_commands.dispatch(nbody::app::SaveSnapshot{snapshot_path, "edited"});
+    assert(saved.applied());
+    std::filesystem::remove(snapshot_path);
 
     WorldState scalar_single_world = WorldState::deterministic(48, Dimension::Two, 23);
     WorldState scalar_mt_world = WorldState::deterministic(48, Dimension::Two, 23);

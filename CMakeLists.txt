@@ -15,6 +15,7 @@ if (NOT BUILD_MODE STREQUAL "greenfield")
 endif()
 
 find_package(Vulkan REQUIRED)
+find_program(NBODY_GLSLC glslc REQUIRED)
 find_package(glfw3 CONFIG QUIET)
 if (TARGET glfw)
     set(NBODY_GLFW_TARGET glfw)
@@ -60,6 +61,9 @@ endif()
 
 add_executable(nbody_app
     src/app/main.cpp
+    src/app/commands.cpp
+    src/app/simulation_session.cpp
+    src/io/snapshot.cpp
     src/frontend/vulkan_frontend.cpp
     third_party/imgui/imgui.cpp
     third_party/imgui/imgui_draw.cpp
@@ -68,13 +72,59 @@ add_executable(nbody_app
     third_party/imgui/backends/imgui_impl_glfw.cpp
     third_party/imgui/backends/imgui_impl_vulkan.cpp
 )
+set(NBODY_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+add_custom_command(
+    OUTPUT "${NBODY_SHADER_OUTPUT_DIR}/body.vert.spv"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${NBODY_SHADER_OUTPUT_DIR}"
+    COMMAND ${NBODY_GLSLC} "${CMAKE_SOURCE_DIR}/shaders/body.vert"
+            -o "${NBODY_SHADER_OUTPUT_DIR}/body.vert.spv"
+    DEPENDS shaders/body.vert
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT "${NBODY_SHADER_OUTPUT_DIR}/body.frag.spv"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${NBODY_SHADER_OUTPUT_DIR}"
+    COMMAND ${NBODY_GLSLC} "${CMAKE_SOURCE_DIR}/shaders/body.frag"
+            -o "${NBODY_SHADER_OUTPUT_DIR}/body.frag.spv"
+    DEPENDS shaders/body.frag
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT "${NBODY_SHADER_OUTPUT_DIR}/grid.vert.spv"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${NBODY_SHADER_OUTPUT_DIR}"
+    COMMAND ${NBODY_GLSLC} "${CMAKE_SOURCE_DIR}/shaders/grid.vert"
+            -o "${NBODY_SHADER_OUTPUT_DIR}/grid.vert.spv"
+    DEPENDS shaders/grid.vert
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT "${NBODY_SHADER_OUTPUT_DIR}/grid.frag.spv"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${NBODY_SHADER_OUTPUT_DIR}"
+    COMMAND ${NBODY_GLSLC} "${CMAKE_SOURCE_DIR}/shaders/grid.frag"
+            -o "${NBODY_SHADER_OUTPUT_DIR}/grid.frag.spv"
+    DEPENDS shaders/grid.frag
+    VERBATIM
+)
+add_custom_target(nbody_shaders DEPENDS
+    "${NBODY_SHADER_OUTPUT_DIR}/body.vert.spv"
+    "${NBODY_SHADER_OUTPUT_DIR}/body.frag.spv"
+    "${NBODY_SHADER_OUTPUT_DIR}/grid.vert.spv"
+    "${NBODY_SHADER_OUTPUT_DIR}/grid.frag.spv")
+add_dependencies(nbody_app nbody_shaders)
 target_include_directories(nbody_app PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/imgui
 )
 target_link_libraries(nbody_app PRIVATE nbody_simulation Vulkan::Vulkan ${NBODY_GLFW_TARGET})
+target_compile_definitions(nbody_app PRIVATE
+    NBODY_SHADER_DIR="${NBODY_SHADER_OUTPUT_DIR}")
 
-add_executable(nbody_tests tests/simulation_tests.cpp)
+add_executable(nbody_tests
+    tests/simulation_tests.cpp
+    src/app/commands.cpp
+    src/app/simulation_session.cpp
+    src/io/snapshot.cpp
+)
 target_link_libraries(nbody_tests PRIVATE nbody_simulation)
 
 add_executable(nbody_benchmark tools/benchmark_main.cpp)

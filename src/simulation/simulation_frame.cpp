@@ -14,8 +14,11 @@ CpuFramePublisher::CpuFramePublisher(std::size_t slot_count) {
 FramePublication CpuFramePublisher::publish(const WorldState& world,
                                             const FramePublicationRequest& request) {
     if (request.transport != FrameTransport::CpuSnapshot) {
-        return {FramePublicationStatus::UnsupportedTransport, request.transport, 0, {},
-                "CPU frame publisher cannot provide a renderer buffer"};
+        FramePublication publication;
+        publication.status = FramePublicationStatus::UnsupportedTransport;
+        publication.transport = request.transport;
+        publication.message = "CPU frame publisher cannot provide a renderer buffer";
+        return publication;
     }
     std::shared_ptr<SimulationFrame> writable;
     for (const auto& slot : slots_) {
@@ -52,6 +55,15 @@ FramePublication CpuFramePublisher::publish(const WorldState& world,
     publication.status = FramePublicationStatus::Published;
     publication.transport = request.transport;
     publication.sequence = next_sequence_++;
+    publication.description = {
+        publication.sequence,
+        writable->dimension,
+        writable->simulation_time,
+        writable->body_count,
+        writable->previous_body_count,
+        writable->body_count_changed};
+    publication.storage.kind = rendering::FrameStorageKind::CpuSnapshot;
+    publication.readiness = {rendering::ReadinessKind::Immediate, 0};
     publication.cpu_snapshot = FrameLease(
         std::const_pointer_cast<const SimulationFrame>(writable));
     publication.message = "CPU snapshot published";

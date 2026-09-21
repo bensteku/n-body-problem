@@ -1,7 +1,7 @@
 # N-Body Simulator — Greenfield Rebuild Plan
 
-Status: Draft guidance, not a final implementation specification  
-Date: 2026-09-12
+Status: Living implementation guidance; completed slices are marked explicitly
+Date: 2026-09-21
 
 ## 1. Purpose and product vision
 
@@ -197,6 +197,185 @@ Dynamic body creation, fragmentation, absorption, and compaction must be reflect
 
 This frame-publication design should precede further physics-module expansion. It establishes the ownership, lifetime, synchronization, and dynamic-cardinality rules that Scalar, SIMD, and Vulkan engines must all satisfy while preserving backend-specific internal layouts.
 
+### 4.2 Frontend shell and presentation state
+
+The frontend should be organized as a persistent application shell around the
+active simulation state. The shell owns application mode, commands,
+presentation state, panel layout, input routing, and transition animation;
+the simulation session owns physical state and numerical progression.
+
+The primary application flow is:
+
+~~~text
+Main Menu (`AppMode::MainMenu`)
+  -> Simulation (`AppMode::Simulation`)
+      -> Startup Edit (`SimulationMode::StartupEdit`)
+      -> Paused / Running / Edit
+  -> Benchmark (`AppMode::Benchmark`)
+~~~
+
+Initial Edit Mode starts in 2D by default. Its top bar contains the only
+dimension-switch control. Switching between 2D and 3D is a destructive setup
+operation: it discards the current setup completely, returns to an empty
+Initial Edit Mode state in the selected dimension, and therefore requires
+explicit confirmation. The control disappears when Initial Edit Mode ends and
+is not available in normal Edit Mode during a running simulation. A total
+reset/restart returns the session to Initial Edit Mode and makes the control
+available again.
+
+The simulation workspace should provide a consistent top bar, bottom bar,
+left body/navigation panel, right inspector panel, and unobstructed viewport.
+Each edge element is foldable. Top and bottom bars start expanded; left and
+right panels start folded. A folded element leaves a small edge indicator.
+Hovering the indicator for a configurable dwell time (initially about one
+second) expands it with an eased transition. Folding and pinning should be
+explicit so the UI does not unexpectedly disappear while being used.
+
+The viewport rectangle must be derived from the animated panel bounds rather
+than assuming that the renderer owns the complete window. Panel animation is
+wall-clock UI state and must not affect simulation time.
+
+~~~cpp
+enum class AppMode { MainMenu, Simulation, Benchmark };
+
+struct ApplicationState {
+    AppMode mode;
+    SimulationSession session;
+    PresentationState presentation;
+};
+
+struct PresentationState {
+    CameraState camera;
+    CameraFocus focus;
+    SelectionState selection;
+    InspectorState inspector;
+    GridSettings grid;
+    UnitPreferences units;
+    TrajectorySettings trajectories;
+    ReferenceDisplaySettings references;
+};
+
+struct FoldablePanelState {
+    PanelEdge edge;
+    bool expanded;
+    bool pinned;
+    float animation_progress;
+    float hover_time;
+};
+~~~
+
+### 4.3 Inspector presentation and graphics boundary
+
+Body inspection is one view model with multiple presentation modes. Selection
+from the body list displays the inspector statically in the right panel.
+Visual selection in the viewport may instead display an undocked inspector
+anchored near the selected body and following it as it moves. The overlay must
+be clamped to the viewport and may be pinned, dismissed, or returned to the
+right panel. Both modes use the same commands and validation.
+
+The current pixelated body renderer is a temporary presentation. The frontend
+must publish render-relevant data through a graphics-ready scene/frame
+boundary, not through widget-specific structures. That boundary should leave
+room for:
+
+- 2D and 3D camera projections;
+- meshes or sprites instead of point circles;
+- material and texture handles;
+- per-body surface colors, luminosity, roughness, metallicity, and visual kind;
+- ambient, unlit, emissive, and dynamic-lighting modes;
+- depth, blending, post-processing, and debug overlays;
+- GPU-resident body and material buffers where appropriate.
+
+UI panels may request presentation changes, but renderer resources and Vulkan
+objects remain inside rendering/application infrastructure. Simulation code
+must only expose logical physical and visual properties.
+
+### 4.4 Current architectural baseline
+
+The first three architecture slices are implemented and are now constraints on
+future work:
+
+1. `ApplicationState` owns global `AppMode`, one `SimulationSession`, and one
+   unified `PresentationState`. There is no separate `SimulationDocument` or
+   `UIState` domain object.
+2. `SimulationSession` owns `SimulationState`, the selected physics session,
+   `SimulationMode`, and the optional in-memory initial-state checkpoint.
+3. `CommandDispatcher` is the mutation boundary for lifecycle transitions,
+   selection/focus, body creation, solver changes, display-unit preferences,
+   checkpoint capture/restore, and snapshot load/save. The confirmed
+   Initial-Edit-only dimension reset will be added through the same boundary.
+4. `SnapshotSerializer` provides a versioned, human-readable exact physical
+   snapshot format. Loading replaces the session and enters Startup Edit Mode;
+   saving records the current editable/evolving state. A loaded snapshot is
+   never a read-only scenario.
+5. The renderer-facing frame contract now carries backend-neutral frame
+   description, schema, storage classification, readiness, and resource
+   lifetime semantics. CPU publication is implemented; target-specific GPU
+   resources remain future backend work.
+6. The logical render scene and render graph are now defined independently of
+   graphics API calls. They describe camera, materials, overlays, resources,
+   pass intent, and dependencies; target backends will compile them later.
+7. The first Vulkan 2D renderer slice is implemented: shader compilation,
+   Vulkan body pipeline, host-visible dynamic vertex storage, and CPU-frame
+   body submission now render bodies through Vulkan before UI composition.
+
+The current frontend is still a deliberately temporary shell. Its existing
+widgets and renderer are not architectural commitments. Future UI work should
+bind controls to commands and read models rather than adding direct mutation
+paths around the dispatcher.
+
+### 4.5 Shared workflows versus dimension-specific presentation
+
+The application should have one shared workflow layer for commands, text
+input, validation, snapshots, body lists, inspectors, simulation lifecycle,
+and numerical editing. Those features must work regardless of whether the
+current session is 2D or 3D.
+
+Visual spatial affordances are different products in the two dimensions and
+must be implemented and tested separately:
+
+- 2D mouse picking, screen-to-plane mapping, grid lines, orbit overlays,
+  trajectory presentation, and 2D camera behavior;
+- 3D ray picking, depth-aware selection, plane/grid rendering, orbit-plane
+  visualization, trajectory presentation, and 3D camera behavior.
+
+They may share mathematical models, command types, read-only view models, and
+renderer resource policies, but neither dimension should be treated as a
+thin special case of the other. Text-based creation/editing is the universal
+fallback and remains available in both modes.
+
+### 4.6 Separate native and web products
+
+Vulkan and WebGPU are never mixed in one binary. They are separate application
+targets with separate renderer and GPU-simulation implementations:
+
+~~~text
+Native desktop binary
+  portable simulation/domain code
+    ├── Scalar CPU backend
+    ├── SIMD CPU backend
+    └── Vulkan GPU backend
+  Vulkan renderer
+
+Web application binary
+  portable simulation/domain code compiled to WebAssembly
+    ├── Scalar CPU backend
+    ├── WebAssembly SIMD backend where supported
+    └── WebGPU compute backend
+  WebGPU renderer
+~~~
+
+The shared boundary is limited to simulation state schemas, published frame
+semantics, logical render-scene data, commands, snapshots, and conformance
+tests. Vulkan objects, WebGPU objects, synchronization mechanisms, shader
+implementations, resource allocators, and device capability handling remain in
+their respective targets.
+
+Each target may use an integrated zero-copy simulation-to-renderer path when
+both systems run on the same device/API. CPU simulation uses the same logical
+frame contract but uploads through that target's renderer. No cross-API
+resource-sharing abstraction is required.
+
 ## 5. Suggested source layout
 
 This is deliberately provisional. Names and file boundaries may change during implementation.
@@ -204,10 +383,8 @@ This is deliberately provisional. Names and file boundaries may change during im
 ~~~text
 src/
   app/
-    application.*
     app_state.*
-    app_mode.*
-    session_controller.*
+    simulation_session.*
     commands.*
     command_history.*
 
@@ -253,6 +430,9 @@ src/
     renderer.hpp
     renderer_2d.*
     renderer_3d.*
+    render_scene.*
+    render_materials.*
+    render_resources.*
     camera.*
     selection.*
     lighting.*
@@ -263,20 +443,24 @@ src/
 
   ui/
     ui_context.*
+    panel_layout.*
+    panel_animation.*
     hud.*
     main_menu.*
     startup_editor.*
     edit_mode.*
     body_list.*
-    body_details.*
+    body_inspector.*
     creation_dialog.*
+    body_generators.*
     physics_panel.*
     benchmark_panel.*
+    unit_governance.*
     notification.*
 
   io/
     snapshot.*
-    scenario.*
+    snapshot_format.*
     configuration.*
     export.*
 
@@ -837,6 +1021,11 @@ Candidate presets:
 - astronomical units and years;
 - custom normalized units.
 
+Unit conversion and formatting must be governed by one presentation-facing
+unit policy. It owns time display selectors, automatic km/AU/light-year
+distance selection, precision rules, labels, and simulation/snapshot scale
+metadata. Widgets must not carry independent conversion constants.
+
 The equations should operate consistently in the selected units. Internally normalized values may be used to keep magnitudes near one.
 
 ### 11.2 Precision
@@ -1038,9 +1227,16 @@ The analysis must tolerate non-Keplerian but periodic motion where practical, wh
 
 ## 14. Body editing and linked properties
 
-### 14.1 Body property window
+### 14.1 Body inspector and presentation modes
 
-Double-clicking a body or selecting its list entry opens a details/property window containing:
+Selecting a body in the body list displays a static inspector in the right
+panel. Visual selection in the simulation may instead display an undocked
+inspector anchored near the selected body and following it as it moves. Both
+presentations use the same read-only view model, validation, and edit
+commands. The overlay must be clamped to the viewport and may be pinned,
+dismissed, or returned to the right panel.
+
+Double-clicking a body or selecting its list entry opens an inspector containing:
 
 - ID/name, later if names are added;
 - position;
@@ -1154,9 +1350,65 @@ In 3D:
 
 The text creation dialog must remain available as an exact-input fallback.
 
+### 15.3 Body generators and snapshots
+
+The core persistence concept is an exact simulation snapshot, not a separate
+scenario domain object. A snapshot contains the complete physical state and
+its governing configuration:
+
+~~~cpp
+struct SimulationSnapshot {
+    std::uint32_t format_version;
+    SimulationState state;
+    SnapshotMetadata metadata;
+};
+~~~
+
+Snapshots can be loaded, edited in Startup or normal Edit Mode, and saved
+again. They are useful both as checkpoints for resuming a run and as exact
+inputs for tests and benchmarks. The canonical snapshot is physical state plus
+the parameters that govern its evolution; presentation state remains separate
+and is not required to make a simulation reproducible. A future optional
+presentation/layout sidecar must not change the meaning of the physical
+snapshot.
+
+Body generators are Edit Mode tools that write into the current simulation
+state. They
+may provide configurable recipes and deterministic seeds, including:
+
+- random clouds and distributions;
+- spirals and galaxy-like arrangements;
+- two-body and orbit setups;
+- a solar-system-like arrangement with scale, epoch/phase, and static-Sun
+  options;
+- future custom or imported arrangements.
+
+The generated body state is authoritative. Generator name, parameters, and
+seed may be retained as optional metadata or command history for reproducible
+editing, but they are not required to reconstruct a loaded snapshot.
+
+The first implementation uses a versioned human-readable tagged format. The
+serializer validates dimensions, finite numerical values, solver
+configuration, world validity, and format version before a loaded state is
+accepted. `SaveSnapshot` and `LoadSnapshot` commands are the application-facing
+entry points; file dialogs, recent-file UI, and user-facing error notifications
+are presentation work rather than new persistence concepts.
+
+Each active session should retain an in-memory t=0 snapshot. Entering the
+simulation creates or replaces this checkpoint after Startup Edit Mode. A
+restart/reset command restores it exactly, while later edits in Edit Mode may
+explicitly replace the checkpoint. This gives users a low-cost recovery path
+without confusing the checkpoint with the current evolving state. The
+checkpoint uses the same state representation as a serialized snapshot, but it
+does not need filesystem I/O.
+
 ## 16. Application flow and modes
 
 ### 16.1 Startup flow
+
+The main menu should offer either a new empty simulation or loading an exact
+snapshot before entering Startup Edit Mode. Loading a snapshot does not make
+it read-only: it becomes the current editable simulation state.
 
 The required high-level flow is:
 
@@ -1170,13 +1422,27 @@ Main Menu
 
 Startup Edit Mode behaves like normal Edit Mode except that it allows:
 
-- choosing 2D or 3D;
+- choosing 2D or 3D through the top-bar dimension switch, with 2D as the
+  default;
 - selecting the initial solver/backend;
 - setting initial physics and numerical parameters;
 - placing and editing bodies;
+- invoking body generators, including a configurable solar-system-like tool;
+- loading, editing, and saving exact snapshots;
 - configuring boundaries, lighting, grids, and presentation.
 
 Once startup ends and the simulation begins, dimension is immutable for that run.
+
+The dimension switch must not silently convert, preserve, or partially migrate
+the current setup. After confirmation, the world, bodies, simulation time,
+checkpoint, and setup-specific state are reset to an empty Initial Edit Mode
+state in the selected dimension. Normal Edit Mode deliberately has no
+dimension-switch control. Only the total-reset command can return to Initial
+Edit Mode and re-enable it.
+
+The frontend should not require a dedicated Solar-System scenario type. Solar
+systems, debug arrangements, and test setups are ordinary generator tools or
+snapshot files presented through the same workflow.
 
 ### 16.2 Normal Edit Mode
 
@@ -1216,30 +1482,53 @@ If confirmed:
 
 The UI must make the distinction between resume simulation and leave Edit Mode while staying paused clear if both actions are offered.
 
-### 16.5 Rough state machine
+### 16.5 State ownership and transitions
 
 ~~~cpp
 enum class AppMode {
     MainMenu,
+    Simulation,
+    Benchmark
+};
+
+enum class SimulationMode {
     StartupEdit,
     Running,
-    EnteringEdit,
+    Paused,
     Edit,
-    LeavingEdit,
-    PausedNonEdit
+    EnteringEdit,
+    LeavingEdit
 };
 ~~~
 
-The final state model may be simpler, but it must explicitly represent transition animations and the pre-edit run/paused status.
+`AppMode` answers which major application workspace is active. `SimulationMode`
+answers what the simulation session is doing inside the Simulation workspace.
+Panel folding, hover dwell, and transition animation progress belong to
+`PresentationState`; they must not become additional global application modes.
+The implementation already has these two levels, with the transition modes
+reserved for the smooth Edit Mode and panel transitions still to be wired into
+the UI.
 
 ## 17. HUD and quality-of-life features
 
-The rudimentary HUD should be available during simulation and optionally hideable.
+The rudimentary HUD should be available during simulation and optionally
+hideable. The full HUD is composed of foldable edge elements rather than one
+monolithic window. Top and bottom elements are expanded by default; left and
+right navigation/inspector panels are folded by default.
+
+When folded, each element leaves a small edge indicator. Hovering it for a
+configurable dwell time, initially about one second, expands the element with
+an eased animation. The panel layout computes the remaining viewport bounds
+continuously during the transition. Folding, unfolding, pinning, and hover
+dwell are UI state and must be independent of simulation time.
 
 Initial HUD contents:
 
 - timescale/simulation speed control, likely a slider;
-- simulated elapsed time;
+- simulated elapsed time with a nearby governed unit selector (seconds,
+  days, months, or years);
+- grid-distance indicator with automatic km/AU/light-year selection based on
+  zoom level, plus an explicit override where useful;
 - render FPS;
 - simulation step duration;
 - body count;
@@ -1254,6 +1543,9 @@ Initial HUD contents:
 - benchmark/telemetry access.
 
 The HUD should display the actual active solver, not merely the requested setting.
+Unit conversion and automatic distance thresholds must come from one shared
+unit-governance policy, not from formatting conditionals scattered through
+individual widgets.
 
 ## 18. Grids, reference planes, and orrery presentation
 
@@ -1483,7 +1775,7 @@ An active benchmark should allow configuration of:
 - dimension;
 - force model;
 - body count;
-- initialization/scenario;
+- snapshot input or deterministic body-generator command;
 - random seed;
 - number of warm-up steps;
 - measured steps;
@@ -1519,7 +1811,8 @@ Native output should support at least a simple machine-readable format initially
 
 Record:
 
-- scenario metadata;
+- exact snapshot metadata;
+- snapshot format version and unit-system metadata;
 - solver metadata;
 - hardware/toolchain metadata;
 - parameters;
@@ -1527,6 +1820,11 @@ Record:
 - timing samples;
 - diagnostic samples;
 - optional body snapshots.
+
+Benchmarks should prefer exact snapshots as their primary input so that runs
+are reproducible after interactive editing. A generator command may be stored
+as provenance, but it must not replace the captured initial state used for the
+measurement.
 
 Python remains a companion for offline plotting, parameter sweeps, and exploratory analysis, not the primary live renderer.
 
@@ -1706,6 +2004,9 @@ The following order is intended to minimize architectural rework.
 
 ### Phase 0 — repository and build reset
 
+Status: foundational build and shell work is in place; renderer/UI
+reconstruction remains ongoing.
+
 Goals:
 
 - preserve the old implementation for reference only;
@@ -1713,13 +2014,24 @@ Goals:
 - create CMake presets;
 - confirm MSVC/Ninja command-line builds;
 - decide and integrate the first renderer/UI dependencies;
+- define the application-shell, command, panel-layout, and presentation-state
+  boundaries;
+- define the graphics-ready render-scene/material boundary separately from
+  the temporary debug body renderer;
 - define hot/warm/cold data ownership and the domain-context boundaries;
 - add a small data-layout/profiling harness before optimizing solver code;
 - add warning levels and basic CI-like local commands.
 
-Deliverable: an empty or minimal native executable plus test and benchmark targets that build cleanly.
+Completed so far: command-line MSVC/CMake/Ninja builds, test and benchmark
+targets, the application-state shell, and the first command boundary. The
+remaining renderer/UI dependency and render-scene work continues in later
+phases.
 
 ### Phase 1 — core types and deterministic state
+
+Status: core state, session checkpointing, and physical snapshot persistence
+are implemented. The data-oriented storage and richer visual-state portions
+remain to be completed.
 
 Implement:
 
@@ -1733,12 +2045,20 @@ Implement:
 - dense storage and stable-ID mapping;
 - explicit hot/warm/cold data separation;
 - read-only views and mutation-phase boundaries;
-- serialization of a world state;
+- versioned serialization of a complete simulation snapshot; **completed**;
+- an in-memory t=0 checkpoint and exact restore operation; **completed**;
 - deterministic random initialization with explicit seed.
 
-Deliverable: a headless program can create, serialize, load, and inspect deterministic worlds.
+Completed deliverable: a headless program can create, serialize, load, and
+inspect deterministic worlds. Snapshot loading replaces the session and enters
+Startup Edit Mode, while saving is available through the command boundary.
+Future work adds presentation metadata only if it can remain separate from the
+canonical physical snapshot.
 
 ### Phase 2 — scalar full Newtonian reference
+
+Status: implemented as the numerical reference. Conformance coverage,
+diagnostics, and future physics additions still build on this baseline.
 
 Implement:
 
@@ -1754,6 +2074,10 @@ Deliverable: headless deterministic simulation with tests for symmetry, finite v
 
 ### Phase 3 — collision and boundary policies
 
+Status: the principal transparent, hard-body, restitution, reflective-boundary,
+and deferred-mutation paths are implemented. The phase remains open for
+additional lifecycle and conservation coverage.
+
 Implement:
 
 - transparent collision mode;
@@ -1767,10 +2091,14 @@ Deliverable: collision and boundary behavior is testable independently of render
 
 ### Phase 4 — command-line benchmark foundation
 
+Status: benchmark target exists; the reproducible snapshot-driven benchmark
+workflow is partially complete and should be formalized next to the frontend
+workflow.
+
 Implement:
 
 - benchmark executable;
-- deterministic scenarios;
+- deterministic snapshot inputs and body-generator fixtures;
 - warm-up and measurement phases;
 - wall-clock and simulation timing;
 - telemetry records;
@@ -1779,23 +2107,41 @@ Implement:
 
 Deliverable: repeatable command-line performance and correctness measurements.
 
-### Phase 5 — native 2D application shell
+### Phase 5 — dimension-agnostic native application shell
+
+Status: application state, presentation state, simulation session, and command
+dispatcher foundations are implemented. The visible shell is still
+prototype-quality and is the next major frontend slice. The shell, panel
+layout, command routing, camera contract, selection model, and HUD must work
+for both dimensions even if the first renderer implementation is 2D.
 
 Implement:
 
 - main menu;
-- startup edit mode;
-- 2D camera;
-- basic body rendering;
-- basic selection;
+- startup Edit Mode for an empty state or a loaded snapshot;
+- dimension choice as a Startup Edit Mode setting, with the choice locked once
+  the run begins;
+- foldable top, bottom, left, and right panel shell with animated viewport bounds;
+- dimension-independent camera and viewport interfaces, with an initial 2D
+  projection implementation;
+- graphics-ready render-scene handoff with temporary debug body rendering;
+- body-list selection and inspector routing through shared commands; viewport
+  mouse selection is deferred to the dimension-specific presentation phases;
 - run/pause state;
 - HUD;
 - simulated elapsed time;
 - render FPS and solver information.
 
-Deliverable: a usable 2D application backed by the tested scalar solver.
+Deliverable: a usable application shell that can start either a 2D or 3D
+session, backed initially by the tested scalar solver. 3D presentation may
+still be a minimal/debug view at this point, but it must not require a second
+UI architecture.
 
 ### Phase 6 — edit mode and body property workflows
+
+Status: command-level lifecycle, selection, focus, body creation, checkpoint,
+and snapshot load/save primitives are implemented. This phase now means
+building the actual workflows and UI around those primitives.
 
 Implement:
 
@@ -1806,26 +2152,39 @@ Implement:
 - immediate behavior when the simulation was paused before Edit Mode;
 - body list;
 - body selection and comparison selection;
-- body details window;
+- static right-panel body inspector;
+- world-anchored inspector overlay for viewport selection;
+- universal text-based body creation/editing and validation;
+- body-generator tools, including configurable solar-system-like generation;
 - text-based body creation;
 - initial position and velocity editing;
 - locked mass/radius/density relationships;
 - rejection/highlighting behavior;
 - static-body and origin-anchor commands;
+- top-bar Edit Mode entry and explicit t=0 reset/restore command;
+- confirmed top-bar dimension switch while in Initial Edit Mode only;
+- file-picker/file-path UI and notifications for the existing load/save snapshot
+  commands;
 - undo/redo-ready command representation.
 
 Deliverable: a coherent interactive editor without yet requiring advanced 3D placement.
 
 ### Phase 7 — grid, references, and diagnostic visualization
 
+Status: split deliberately into separate 2D and 3D presentation tracks. The
+shared diagnostic data model can precede either renderer, but visual behavior
+must be implemented and tested per dimension.
+
 Implement:
 
-- mathematical-origin reference;
-- body and coordinate references;
+- mathematical-origin reference and shared body/coordinate read models;
 - relative position/velocity/distance display;
 - body-to-body force details;
-- 2D grid;
-- 3D-grid data model, even before full 3D rendering;
+- 2D mouse selection, mathematical-origin grid lines, trajectory/orbit
+  overlays, and 2D reference visuals;
+- 3D reference/read-model groundwork, followed by separate 3D ray selection,
+  depth-aware grid planes, trajectory/orbit-plane overlays, and 3D reference
+  visuals;
 - spin-axis arrow;
 - equatorial ring;
 - prime-meridian marker;
@@ -1837,6 +2196,10 @@ Implement:
 Deliverable: users can understand spatial, orbital, and rotational state visually, including recent movement and the confidence of any displayed orbit estimate.
 
 ### Phase 8 — SIMD full solver
+
+Status: implemented, including AVX2 execution where available and a scalar
+fallback path. Remaining work is conformance hardening, profiling, and
+benchmark characterization rather than building the solver from scratch.
 
 Implement:
 
@@ -1853,6 +2216,10 @@ Deliverable: SIMD is both faster where expected and numerically characterized.
 
 ### Phase 9 — CPU Barnes–Hut
 
+Status: implemented for scalar full/approximated engine selection and the
+existing Barnes–Hut tree. Remaining work is edge-case, accuracy, and scaling
+validation.
+
 Implement:
 
 - bounded quadtree and octree/3D tree;
@@ -1866,6 +2233,9 @@ Deliverable: a reliable CPU approximation backend with visible accuracy/performa
 
 ### Phase 10 — SIMD Barnes–Hut
 
+Status: implemented, including the SIMD Barnes–Hut kernel and fallback path.
+Remaining work is parity validation and performance measurement.
+
 Implement:
 
 - SIMD processing of leaf interactions and/or selected node operations;
@@ -1876,6 +2246,9 @@ Implement:
 Deliverable: the full CPU implementation matrix is operational.
 
 ### Phase 11 — Vulkan GPU full solver
+
+Status: not implemented. The current GPU selection is a fallback/placeholder;
+Vulkan simulation compute remains future work.
 
 Implement:
 
@@ -1892,11 +2265,12 @@ Avoid a full N × N interaction matrix unless measurements demonstrate that it i
 
 Deliverable: Vulkan GPU full pairwise is usable and benchmarkable.
 
-### Phase 12 — native 3D application
+### Phase 12 — full 3D renderer and interaction
 
 Implement:
 
-- 3D camera;
+- production 3D camera implementation behind the dimension-independent camera
+  interface;
 - orbit/pan/zoom controls;
 - 3D body rendering;
 - point/mesh selection;
@@ -1905,7 +2279,9 @@ Implement:
 - 3D body property display;
 - direct text placement with z position and velocity.
 
-Deliverable: 2D/3D selection is possible during startup, and 3D simulation is usable with the scalar reference backend.
+Deliverable: the 3D path is a first-class implementation of the same startup,
+simulation, editing, selection, inspection, and command workflows already used
+by 2D.
 
 ### Phase 13 — 3D camera placement and richer presentation
 
@@ -1922,6 +2298,9 @@ Implement:
 Deliverable: camera-based 3D creation is convenient while exact text entry remains available.
 
 ### Phase 14 — Vulkan GPU Barnes–Hut
+
+Status: not implemented; depends on the Vulkan GPU execution and resource
+boundaries from Phase 11.
 
 Implement:
 
